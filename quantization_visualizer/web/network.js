@@ -42,6 +42,7 @@
       this.active = false;
       this.alive = true;
       this.clock = 0;
+      this.motionRate = 1;
       this.activityAt = -10;
       this.lastFrame = 0;
       this.selected = null;
@@ -225,6 +226,7 @@
         this.target.x = this.width * .34 - this.width / 2 - (node.x - 560) * this.scaleX * this.target.zoom;
         this.target.y = -(node.y - 250) * this.scaleY * this.target.zoom;
       } else {
+        this.target = {zoom: 1, x: 0, y: 0};
         this.options.onSelect?.(null);
       }
       this.dirty = true;
@@ -281,6 +283,7 @@
       }
       this.dirty = true;
     }
+    setSpeed(value) { this.motionRate = clamp(Number(value) || 1, .25, 3); }
     setReducedMotion(value) { this.reduced = Boolean(value); this.dirty = true; }
     resetView() { this.target = {zoom: 1, x: 0, y: 0}; this._select(null); }
     destroy() {
@@ -294,8 +297,8 @@
       if (!this.alive) return;
       const dt = Math.min(.05, (timestamp - (this.lastFrame || timestamp)) / 1000);
       this.lastFrame = timestamp;
-      this.valueBlend = 1 - Math.exp(-dt * 7.7);
-      if (!this.paused && !this.reduced) this.clock += dt;
+      this.valueBlend = 1 - Math.exp(-dt * this.motionRate * 7.7);
+      if (!this.paused && !this.reduced) this.clock += dt * this.motionRate;
       let moving = false;
       for (const key of ['zoom', 'x', 'y']) {
         const delta = this.target[key] - this.camera[key];

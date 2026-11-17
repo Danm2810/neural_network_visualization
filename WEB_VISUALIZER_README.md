@@ -6,10 +6,11 @@ On a fresh machine, run `./setup_visualizer.ps1`. Python and Microsoft Edge WebV
 
 ## Presentation controls
 
-Each slide stays readable for at least 12 seconds after its entrance transition finishes, including in reduced-motion mode. Transitions move more slowly, and the slide stays longer when no next training event is available. Training can run ahead without shortening this reading time.
+Each slide stays readable after its entrance transition finishes for at least 20 seconds on Slow, 12 seconds on Normal, or 8 seconds on Fast, including in reduced-motion mode. Transitions move more slowly, and the slide stays longer when no next training event is available. Training can run ahead without shortening this reading time.
 
 * **Start learning:** choose Quick / real data, Full experiment, or Illustrative demo.
-* **Pause visuals:** freeze the presentation to discuss a scene. Training and live measurements continue. Resume continues the bounded visual story.
+* **Pause visuals:** freeze the presentation to discuss a scene. Training and live measurements continue. Resume continues the bounded visual story. Pause/Resume is a global visual playback choice changed only by that button or Space. Inspection holds the reading timer separately. Closing details, Go live, replay, and starting or stopping Python never override the playback choice.
+* **Go live:** clear queued/replayed visuals, close neuron details, and jump directly to the latest observed activity or completed results. Training itself is unaffected, and an existing visual pause stays paused.
 * **Replay recent:** revisit recent observed scenes without retraining. Return live ends the replay.
 * **Motion:** enable reduced motion. System reduced-motion preferences are also respected.
 * **Stop:** terminate computation. Start begins a fresh run; there is no checkpoint resume.
@@ -47,3 +48,7 @@ Run `.venv/Scripts/python.exe -m unittest test_visualizer test_desktop_bridge -v
 Design references: [TensorFlow Playground](https://playground.tensorflow.org/), [Lenis](https://lenis.dev/), and [Basement](https://basement.studio/). See `web/vendor/THIRD_PARTY.md` for animation-library attribution. Playwright is an optional development/testing dependency, not an application requirement.
 
 Browser checks in `test_web_presentation.py --live` exercise the actual Quick worker, pause while training continues, dataset transitions, every dense neuron, spatial-map inspection, result reveal, scrolling, replay, and reduced motion. `test_native_window.py` verifies the real Edge WebView2 renderer and Python bridge. Preview screenshots are in `visualizer_previews/`. A local headless Chromium measurement at 1440×940 produced a median frame interval of 16.7 ms; animation performance will depend on the presenting computer.
+
+### Presentation speed
+
+Click the current Speed button to open the rounded slider above it to choose **Slow**, **Normal** (the default), or **Fast**. It changes the network signal motion and results reveal, including animations already playing. Slide transitions always keep their original speed. The three rates are 0.6×, 1×, and 1.5×. Slides allow 20, 12, or 8 seconds of reading time respectively after their entrance; training and live measurements run independently. The slider supports dragging, clicking, and the arrow keys. Pause and reduced-motion settings remain in effect at every speed.

@@ -3,7 +3,8 @@
   'use strict';
   const $ = id => document.getElementById(id);
   // Reading time begins after the entrance animation, independent of training speed.
-  const MIN_SLIDE_READING_MS = 12000;
+  const BASE_SLIDE_READING_MS = 12000;
+  const MOTION_SPEEDS = [{label:'Slow',rate:.6},{label:'Normal',rate:1},{label:'Fast',rate:1.5}];
   const sceneDefs = {
     welcome: {number:'00',chapter:'MEET THE MACHINE',eyebrow:'A LEARNING MACHINE, REVEALED',title:['Small weights.','Big ideas.'],description:'Watch a neural network learn, then see what happens when its weights have fewer numbers to choose from.',detail:'Start a real run. Zoom into the network. Follow the ideas.',word:'Let’s learn.',color:'#c3f47b'},
     data:{number:'01',chapter:'MEET THE DATA',eyebrow:'EVERY LEARNING STORY STARTS HERE',title:['First,','look closely.'],description:'Images become numbers. The network reads a small group of images at a time, called a batch.',detail:'MNIST contains handwritten digits from 0 to 9. The same network will later tackle color photographs.',word:'Meet the data.',color:'#d1dfef'},
@@ -14,7 +15,7 @@
     evaluate:{number:'06',chapter:'TAKE THE TEST',eyebrow:'NEW IMAGES. NO ANSWER SHEET.',title:['Now show','what you know.'],description:'The network sees held-out images. It makes predictions without changing its weights, so we can measure how well it learned.',detail:'Accuracy is the share of correct guesses. 80% means about 80 correct answers out of every 100 images.',word:'Take the test.',color:'#b5dfca'},
     results:{number:'07',chapter:'SEE THE BIG PICTURE',eyebrow:'EIGHT MODELS. ONE QUESTION.',title:['What did','we learn?'],description:'Compare how well each model recognized new images. Does using fewer weight levels still give good answers?',detail:'The simplest answer comes from comparing the test scores side by side.',word:'The big picture.',color:'#d0f18c'}
   };
-  const state={seq:0,running:false,mode:'quick',paused:false,replaying:false,queue:[],replayQueue:[],history:[],snapshots:new Map(),results:new Map(),artifacts:[],logs:[],tables:[],seenDatasets:new Set(),current:null,sceneStarted:0,transitioning:false,transitionTl:null,revealTl:null,pauseAt:0,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,terminal:null,completed:false,networkFocused:false};
+  const state={speedIndex:1,motionRate:1,seq:0,running:false,mode:'quick',paused:false,replaying:false,queue:[],replayQueue:[],history:[],snapshots:new Map(),results:new Map(),artifacts:[],logs:[],tables:[],seenDatasets:new Set(),current:null,sceneStarted:0,transitioning:false,transitionTl:null,revealTl:null,pauseAt:0,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,terminal:null,completed:false,networkFocused:false};
   let network=null, polling=false, lenis=null, toastTimer=null;
   state.sceneArchive=new Map();state.seenScenes=new Set();state.replayReturn=null;
   const normalizeDataset = value => String(value||'MNIST').toUpperCase().replace(/[^A-Z0-9]/g,'')==='CIFAR10'?'CIFAR10':'MNIST';
@@ -27,11 +28,45 @@
   function titleLines(lines){const h=$('scene-title');h.replaceChildren(document.createTextNode(lines[0]),document.createElement('br'));const em=document.createElement('em');em.textContent=lines[1];h.append(em);}
   function setModeNote(){const notes={quick:'QUICK RUN · Real training, smaller dataset. These scores are a demonstration, not a benchmark.',full:'FULL EXPERIMENT · Original datasets and epoch counts. Live metrics continue while the visual story is paused.',demo:'ILLUSTRATIVE DEMO · Generated events and example scores only. No network is being trained.'};$('mode-banner').textContent=notes[state.mode];}
   function setNetworkFocus(focused){state.networkFocused=focused;document.body.classList.toggle('network-focused',focused);$('reset-view').textContent=focused?'Back to overview ↙':'Reset view ↙';}
-  function ensureNetwork(){if(!network && window.NetworkView){network=new NetworkView($('network-canvas'),{onSelect:selection=>{if(selection)setNetworkFocus(true);else setNetworkFocus(false);}});network.setReducedMotion?.(state.reduced);}return network;}
+  function inspectNetwork(selection){
+    if(selection){
+      if(!state.networkFocused){
+        // A click can arrive as a cover starts moving. Return to the readable
+        // scene and retain the next topic instead of covering the inspector.
+        if(state.transitioning){
+          const next=state.transitionScene;
+          clearTransition();
+          if(next&&next!==state.current)(state.replaying?state.replayQueue:state.queue).unshift(next);
+        }
+      }
+      setNetworkFocus(true);
+      $('playback-label').textContent='READING NEURON DETAILS / TRAINING CONTINUES';
+    }else{
+      const wasInspecting=state.networkFocused;
+      setNetworkFocus(false);
+      if(wasInspecting){
+        // Closing a detail always grants a fresh reading interval.
+        state.sceneStarted=performance.now();state.pauseAt=state.sceneStarted;
+      }
+    }
+  }
+  function ensureNetwork(){if(!network && window.NetworkView){network=new NetworkView($('network-canvas'),{onSelect:inspectNetwork});network.setReducedMotion?.(state.reduced);network.setSpeed?.(state.motionRate);network.setPaused(state.paused);}return network;}
+  function setSpeed(index){
+    index=Math.max(0,Math.min(2,Math.round(Number(index)||0)));
+    const speed=MOTION_SPEEDS[index];state.speedIndex=index;state.motionRate=speed.rate;
+    $('animation-speed').value=String(index);$('animation-speed').setAttribute('aria-valuetext',speed.label);
+    $('speed-value').textContent=speed.label;
+    $('speed-button-value').textContent=speed.label;
+    document.querySelector('.speed-control').style.setProperty('--speed-position',index/2);
+    // timeScale preserves progress and paused state; do not restart an in-flight scene.
+    state.revealTl?.timeScale(speed.rate);
+    network?.setSpeed?.(speed.rate);
+  }
   function enqueue(component,event={}){
     if(!sceneDefs[component])return;
     const scene={component,dataset:normalizeDataset(event.dataset||state.current?.dataset),bits:event.bits??state.current?.bits??32,epoch:event.epoch??1,phase:event.phase||component,event:{...event},time:Date.now(),snapshot:null};
     scene.snapshot=state.snapshots.get(keyFor(scene))||null;
+    if(component!=='results'||state.completed)state.latestScene=scene;
     if(component!=='results')state.sceneArchive.set(`${scene.dataset}:${component}`,scene);
     if(component==='results'){
       if(!state.completed)return;
@@ -69,6 +104,7 @@
   function clearTransition() {
     state.transitionTl?.kill();
     state.transitionTl=null;
+    state.transitionScene=null;
     state.transitioning=false;
     if(window.gsap){
       gsap.set('#transition',{visibility:'hidden'});
@@ -78,9 +114,11 @@
     }
   }
   function transition(scene,force=false){
+    if(state.networkFocused){state.queue.unshift(scene);return;}
+    $('pause').disabled=false;
     if(state.transitioning&&!force)return;
     clearTransition();
-    state.transitioning=true;
+    state.transitioning=true;state.transitionScene=scene;
     const datasetChanged=state.current&&state.current.dataset!==scene.dataset;
     const d=sceneDefs[scene.component];
     $('transition-kicker').textContent=scene.component==='results'?'THE EXPERIMENT IS COMPLETE':datasetChanged?'A DIFFERENT DATASET · A NEW CHALLENGE':`CHAPTER ${d.number} / ${d.chapter}`;
@@ -94,7 +132,7 @@
     gsap.set('.transition-sheet',{x:0,y:0,xPercent:0,yPercent:102,backgroundColor:color});
     gsap.set('.transition-title',{opacity:0,x:0,y:22});
     state.transitionTl=gsap.timeline({paused:state.paused,onComplete:()=>{
-      state.transitioning=false;
+      state.transitioning=false;state.transitionScene=null;
       state.sceneStarted=performance.now();
       gsap.set('#transition',{visibility:'hidden'});
       gsap.set('.scene-copy > *',{clearProps:'transform,opacity'});
@@ -108,8 +146,8 @@
       .fromTo('.scene-copy > *',{y:12,opacity:0},{y:0,opacity:1,stagger:.09,duration:.8,ease:'power2.out'},'-=.3');
   }
   function pump(){
-    if(state.paused||state.transitioning)return;
-    const delay=MIN_SLIDE_READING_MS;
+    if(state.paused||state.networkFocused||state.transitioning)return;
+    const delay=BASE_SLIDE_READING_MS/state.motionRate; // Slow: 20s, Normal: 12s, Fast: 8s after entrance.
     if(state.current&&performance.now()-state.sceneStarted<delay)return;
     let next;
     if(state.replaying){next=state.replayQueue.shift();if(!next){state.replaying=false;$('replay').textContent='↶ Replay recent';$('playback-label').textContent='RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';toast('Back to the live presentation.');}}
@@ -132,7 +170,7 @@
     if(['completed','complete','finished','error','failed','stopped'].includes(name)){
       state.running=false;state.terminal=name;$('start').disabled=false;$('stop').disabled=true;$('run-mode').disabled=false;
       if(['completed','complete','finished'].includes(name)){state.completed=true;enqueue('results',state.current||{});$('metric-note').textContent='PROGRAM COMPLETE · Final results use the best held-out test accuracy for each model.';}
-      else{state.queue=[];state.replayQueue=[];state.replaying=false;clearTransition();state.revealTl?.kill();network?.setPaused(true);if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('playback-label').textContent=name==='stopped'?'PROGRAM STOPPED · PARTIAL RUN':'PROGRAM ERROR · SEE MESSAGES';toast(event.message||'The run ended before completion.');if(name==='error')showMessages(true);}
+      else{state.queue=[];state.replayQueue=[];state.replaying=false;clearTransition();state.revealTl?.kill();if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('playback-label').textContent=name==='stopped'?'PROGRAM STOPPED · PARTIAL RUN':'PROGRAM ERROR · SEE MESSAGES';toast(event.message||'The run ended before completion.');if(name==='error')showMessages(true);}
     }
   }
   function receive(event){
@@ -168,10 +206,10 @@
     finally{polling=false;}
   }
   function reset(){
-    document.body.classList.remove('visuals-paused');state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];
-    state.sceneArchive.clear();state.seenScenes.clear();state.replayReturn=null;network?.destroy();network=null;ensureNetwork();
-    state.queue=[];state.replayQueue=[];state.history=[];state.snapshots.clear();state.results.clear();state.seenDatasets.clear();state.artifacts=[];state.logs=[];state.tables=[];$('table-list').replaceChildren();$('table-count').textContent='0';state.paused=false;state.replaying=false;state.terminal=null;state.completed=false;clearTransition();state.revealTl?.kill();state.current=null;
-    if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('log').textContent='';$('message-count').textContent='0';$('pause').textContent='Ⅱ Pause visuals';$('pause').setAttribute('aria-pressed','false');$('replay').textContent='↶ Replay recent';$('replay').disabled=true;for(const name of ['dataset','bits','epoch','batch','loss','accuracy'])$('metric-'+name).textContent='—';$('progress-fill').style.width='0';$('results').hidden=true;$('scene').hidden=false;network?.setPaused(false);setNetworkFocus(false);setModeNote();
+    if(!state.paused){document.body.classList.remove('visuals-paused');state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];}
+    state.latestScene=null;state.sceneArchive.clear();state.seenScenes.clear();state.replayReturn=null;network?.destroy();network=null;ensureNetwork();
+    state.queue=[];state.replayQueue=[];state.history=[];state.snapshots.clear();state.results.clear();state.seenDatasets.clear();state.artifacts=[];state.logs=[];state.tables=[];$('table-list').replaceChildren();$('table-count').textContent='0';state.networkFocused=false;state.replaying=false;state.terminal=null;state.completed=false;clearTransition();state.revealTl?.kill();state.current=null;
+    if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('log').textContent='';$('message-count').textContent='0';syncPauseButton();$('replay').textContent='↶ Replay recent';$('replay').disabled=true;for(const name of ['dataset','bits','epoch','batch','loss','accuracy'])$('metric-'+name).textContent='—';$('progress-fill').style.width='0';$('results').hidden=true;$('scene').hidden=false;network?.setPaused(state.paused);setNetworkFocus(false);setModeNote();
   }
   async function start(){
     if(state.running)return;if(!api()){toast('The desktop bridge is not connected. Launch with launch_visualizer.py.');return;}
@@ -180,18 +218,45 @@
     catch(e){$('start').disabled=false;$('run-mode').disabled=false;$('status').textContent='Could not start';toast(e.message);log(e.message);}
   }
   async function stop(){if(!api())return;try{const response=await api().stop();if(!response.ok)throw Error(response.error||'Could not stop');}catch(e){toast(e.message);}}
-  function togglePause(){
-    state.paused=!state.paused;$('pause').setAttribute('aria-pressed',String(state.paused));$('pause').textContent=state.paused?'▶ Resume visuals':'Ⅱ Pause visuals';
+  function syncPauseButton(){
+    $('pause').disabled=false;
+    $('pause').setAttribute('aria-pressed',String(state.paused));
+    $('pause').textContent=state.paused?'▶ Resume visuals':'Ⅱ Pause visuals';
+  }
+  // Only togglePause (the playback button or its Space shortcut) changes this state.
+  function setPaused(paused,resetReading=false){
+    $('pause').disabled=false;
+    if(state.paused===paused){network?.setPaused(paused);if(paused){state.transitionTl?.pause();state.revealTl?.pause();}return;}
+    state.paused=paused;syncPauseButton();
     document.body.classList.toggle('visuals-paused',state.paused);
     if(state.paused){state.cssPausedAnimations=document.getAnimations().filter(a=>a.playState==='running');state.cssPausedAnimations.forEach(a=>a.pause());}
     else{state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];}
     network?.setPaused(state.paused);if(state.paused){state.pauseAt=performance.now();state.transitionTl?.pause();state.revealTl?.pause();$('playback-label').textContent='VISUALS PAUSED / TRAINING CONTINUES';}
-    else{state.sceneStarted+=performance.now()-state.pauseAt;state.transitionTl?.resume();state.revealTl?.resume();$('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';}
+    else{state.sceneStarted=resetReading?performance.now():state.sceneStarted+performance.now()-state.pauseAt;state.transitionTl?.resume();state.revealTl?.resume();$('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';}
+  }
+  function togglePause(){
+    // The playback control never closes a selected neuron or implicitly toggles twice.
+    // A manual choice persists when the inspector closes; its reading timer stays held.
+    setPaused(!state.paused);
+  }
+  function goLive(){
+    const latest=state.latestScene||state.current;
+    clearTransition();state.revealTl?.kill();
+    state.queue=[];state.replayQueue=[];state.replayReturn=null;state.replaying=false;
+    network?.resetView();
+    $('replay').textContent='↶ Replay recent';
+    if(latest){
+      const scene={...latest,snapshot:state.snapshots.get(keyFor(latest))||latest.snapshot};
+      applyScene(scene);
+      if(scene.component==='results')revealResults();
+    }
+    state.sceneStarted=performance.now();
+    $('playback-label').textContent='LIVE VIEW / LATEST OBSERVED ACTIVITY';
   }
   function replay(){
     if(state.replaying){state.replaying=false;state.replayQueue=[];state.sceneStarted=0;$('replay').textContent='↶ Replay recent';toast('Returning to live activity.');return;}
     const scenes=state.history.filter(x=>x.component!=='welcome').slice(-8);if(scenes.length<2)return;
-    if(state.paused)togglePause();state.replayReturn=state.current;clearTransition();state.replaying=true;state.replayQueue=scenes.map(x=>({...x}));state.sceneStarted=0;$('replay').textContent='↗ Return live';network?.setPaused(false);toast('Replaying recent observed stages. Python keeps running.');pump();
+    state.replayReturn=state.current;clearTransition();state.replaying=true;state.replayQueue=scenes.map(x=>({...x}));state.sceneStarted=0;$('replay').textContent='↗ Return live';network?.setPaused(state.paused);toast('Replaying recent observed stages. Python keeps running.');pump();
   }
   function showMessages(show){$('message-panel').hidden=!show;$('messages').setAttribute('aria-expanded',String(show));if(show)$('log').scrollTop=$('log').scrollHeight;}
   function renderResults(){
@@ -222,12 +287,36 @@
     state.revealTl?.kill();state.revealTl=gsap.timeline().fromTo('.results-intro > *',{y:45,opacity:0},{y:0,opacity:1,duration:.9,stagger:.12,ease:'power3.out'}).fromTo('.score-card',{y:70,opacity:0,rotate:2},{y:0,opacity:1,rotate:0,duration:1,stagger:.08,ease:'power3.out'},'-=.4');
     document.querySelectorAll('.score-number').forEach(el=>{const score={value:0};state.revealTl.to(score,{value:Number(el.dataset.score),duration:1.4,ease:'power2.out',onUpdate:()=>el.textContent=score.value.toFixed(1)},.65);});
     document.querySelectorAll('.score-bar span').forEach(el=>state.revealTl.fromTo(el,{width:'0%'},{width:el.dataset.percent+'%',duration:1.5,ease:'power3.out'},.7));
+    state.revealTl.timeScale(state.motionRate);if(state.paused)state.revealTl.pause();
   }
   function setReduced(value){state.reduced=value;document.body.classList.toggle('reduced-motion',value);$('motion').setAttribute('aria-pressed',String(value));$('motion').textContent=value?'◉ Reduced':'◉ Motion';network?.setReducedMotion?.(value);if(value){state.transitionTl?.progress(1);state.revealTl?.progress(1);lenis?.stop();}else lenis?.start();}
-  $('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('pause').addEventListener('click',togglePause);$('replay').addEventListener('click',replay);$('motion').addEventListener('click',()=>setReduced(!state.reduced));$('run-mode').addEventListener('change',()=>{state.mode=$('run-mode').value;setModeNote();});$('messages').addEventListener('click',()=>showMessages($('message-panel').hidden));$('close-messages').addEventListener('click',()=>showMessages(false));$('reset-view').addEventListener('click',()=>{setNetworkFocus(false);network?.resetView();});$('close-inspector').addEventListener('click',()=>{$('inspector').hidden=true;setNetworkFocus(false);});$('back-network').addEventListener('click',()=>{const recent=[...state.history].reverse().find(x=>x.component!=='results');if(recent)transition(recent,true);});document.querySelector('.brand').addEventListener('click',e=>{e.preventDefault();network?.resetView();});document.addEventListener('keydown',e=>{if(e.key==='Escape'){showMessages(false);setNetworkFocus(false);network?.resetView();}if(e.code==='Space'&&!['INPUT','SELECT','BUTTON','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();togglePause();}});
+  function showSpeed(open,restoreFocus=false){
+    $('speed-popover').hidden=!open;
+    $('speed-toggle').setAttribute('aria-expanded',String(open));
+    if(open)$('animation-speed').focus();
+    else if(restoreFocus)$('speed-toggle').focus();
+  }
+  $('speed-toggle').addEventListener('click',()=>showSpeed($('speed-popover').hidden));
+  $('animation-speed').addEventListener('input',e=>setSpeed(e.target.value));
+  // Keep the dial available while dragging or using arrow keys; commit on release or Enter.
+  $('animation-speed').addEventListener('pointerup',()=>showSpeed(false,true));
+  $('animation-speed').addEventListener('keydown',e=>{
+    if(e.key==='Enter'){e.preventDefault();showSpeed(false,true);}
+  });
+  document.addEventListener('pointerdown',e=>{
+    if(!e.target.closest('.speed-picker'))showSpeed(false);
+    if(state.networkFocused&&!e.target.closest('#network-stage,#inspector,.presentation-controls'))network?.resetView();
+  });
+  document.querySelector('.speed-picker').addEventListener('focusout',e=>{
+    if(!e.currentTarget.contains(e.relatedTarget))showSpeed(false);
+  });
+  document.querySelector('.speed-picker').addEventListener('keydown',e=>{
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();showSpeed(false,true);}
+  });
+  $('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('pause').addEventListener('click',togglePause);$('go-live').addEventListener('click',goLive);$('replay').addEventListener('click',replay);$('motion').addEventListener('click',()=>setReduced(!state.reduced));$('run-mode').addEventListener('change',()=>{state.mode=$('run-mode').value;setModeNote();});$('messages').addEventListener('click',()=>showMessages($('message-panel').hidden));$('close-messages').addEventListener('click',()=>showMessages(false));$('reset-view').addEventListener('click',()=>network?.resetView());$('close-inspector').addEventListener('click',()=>{$('inspector').hidden=true;network?.resetView();});$('back-network').addEventListener('click',()=>{const recent=[...state.history].reverse().find(x=>x.component!=='results');if(recent)transition(recent,true);});document.querySelector('.brand').addEventListener('click',e=>{e.preventDefault();network?.resetView();});document.addEventListener('keydown',e=>{if(e.key==='Escape'){showMessages(false);network?.resetView();}if(e.code==='Space'&&!['INPUT','SELECT','BUTTON','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();togglePause();}});
   window.addEventListener('pywebviewready',()=>{$('bridge-note').textContent='DESKTOP CONNECTED';poll();});
   ensureNetwork();setReduced(state.reduced);applyScene({component:'welcome',dataset:'MNIST',bits:32,event:{}});
   if(window.Lenis){try{lenis=new Lenis({wrapper:$('results'),content:$('results-content'),smoothWheel:true,lerp:.09,autoRaf:true});if(state.reduced)lenis.stop();}catch(e){log('Smooth scrolling unavailable: '+e.message);}}
   setInterval(poll,200);setInterval(pump,100);
-  window.lab={state,receive,pump,transition,applyScene,start,stop,togglePause,replay,renderResults,setReduced,get network(){return network;}};
+  window.lab={state,receive,pump,transition,applyScene,start,stop,togglePause,goLive,replay,renderResults,setReduced,setSpeed,get network(){return network;}};
 })();
