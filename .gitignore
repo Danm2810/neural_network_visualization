@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+data/
+dataScience/
+visualizer_runs/
+visualizer_previews/
+*.jsonl
+native_validation.json
+.env
+.env.*
+.tools/
+.pytest_cache/
