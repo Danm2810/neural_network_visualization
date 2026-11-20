@@ -6,14 +6,14 @@
   const BASE_SLIDE_READING_MS = 12000;
   const MOTION_SPEEDS = [{label:'Slow',rate:.6},{label:'Normal',rate:1},{label:'Fast',rate:1.5}];
   const sceneDefs = {
-    welcome: {number:'00',chapter:'MEET THE MACHINE',eyebrow:'A LEARNING MACHINE, REVEALED',title:['Small weights.','Big ideas.'],description:'Watch a neural network learn, then see what happens when its weights have fewer numbers to choose from.',detail:'Start a real run. Zoom into the network. Follow the ideas.',word:'Let’s learn.',color:'#c3f47b'},
-    data:{number:'01',chapter:'MEET THE DATA',eyebrow:'EVERY LEARNING STORY STARTS HERE',title:['First,','look closely.'],description:'Images become numbers. The network reads a small group of images at a time, called a batch.',detail:'MNIST contains handwritten digits from 0 to 9. The same network will later tackle color photographs.',word:'Meet the data.',color:'#d1dfef'},
-    quantize:{number:'02',chapter:'CHOOSE THE WEIGHT LEVELS',eyebrow:'FEWER SETTINGS. A DIFFERENT CHALLENGE.',title:['Less precision.','Still learning.'],description:'Weights are adjustable knobs. Quantization gives the convolution weights fewer possible settings.',detail:'The network keeps full-precision master weights for learning. These temporary versions are used to make predictions.',word:'Simplify.',color:'#dfaff7'},
-    forward:{number:'03',chapter:'MAKE A PREDICTION',eyebrow:'FROM PIXELS TO A BEST GUESS',title:['A signal','finds its way.'],description:'Layers find patterns, combine them, and make a guess. Follow the signal from the image to the ten possible answers.',detail:'Convolution finds local patterns. ReLU keeps positive responses. Pooling shrinks maps. Dense layers combine the evidence.',word:'Make a guess.',color:'#91dcf5'},
-    backward:{number:'04',chapter:'LEARN FROM THE MISTAKE',eyebrow:'THE ANSWER SENDS A SIGNAL BACK',title:['Wrong guesses','teach us.'],description:'The loss measures how far the guess was from the right answer. Gradients tell the network which adjustments could help.',detail:'The learning signal travels backward. A straight-through estimator lets it pass through the quantization step.',word:'Learn why.',color:'#f7a3ae'},
-    update:{number:'05',chapter:'ADJUST & TRY AGAIN',eyebrow:'ONE SMALL CHANGE AT A TIME',title:['Turn the knobs.','Try again.'],description:'Adam, the optimizer, uses the gradients to adjust the stored weights. The next batch gets a slightly different network.',detail:'All trainable layers are updated. Only the convolution weights are quantized for the next forward pass.',word:'Adjust.',color:'#f2d274'},
-    evaluate:{number:'06',chapter:'TAKE THE TEST',eyebrow:'NEW IMAGES. NO ANSWER SHEET.',title:['Now show','what you know.'],description:'The network sees held-out images. It makes predictions without changing its weights, so we can measure how well it learned.',detail:'Accuracy is the share of correct guesses. 80% means about 80 correct answers out of every 100 images.',word:'Take the test.',color:'#b5dfca'},
-    results:{number:'07',chapter:'SEE THE BIG PICTURE',eyebrow:'EIGHT MODELS. ONE QUESTION.',title:['What did','we learn?'],description:'Compare how well each model recognized new images. Does using fewer weight levels still give good answers?',detail:'The simplest answer comes from comparing the test scores side by side.',word:'The big picture.',color:'#d0f18c'}
+    welcome: {number:'00',chapter:'MEET THE MACHINE',eyebrow:'A LEARNING MACHINE, REVEALED',title:['Small weights.','Big ideas.'],description:'Watch a neural network learn, then see what happens when its weights have fewer numbers to choose from.',detail:'Reveal the network one layer at a time. This is a guided view of its fixed architecture; training changes weights, not its size.'},
+    data:{number:'01',chapter:'MEET THE DATA',eyebrow:'EVERY LEARNING STORY STARTS HERE',title:['First,','look closely.'],description:'Images become numbers. The network reads a small group of images at a time, called a batch.',detail:'MNIST contains handwritten digits from 0 to 9. The same network will later tackle color photographs.'},
+    quantize:{number:'02',chapter:'CHOOSE THE WEIGHT LEVELS',eyebrow:'FEWER SETTINGS. A DIFFERENT CHALLENGE.',title:['Less precision.','Still learning.'],description:'Weights are adjustable knobs. Quantization gives the convolution weights fewer possible settings.',detail:'The network keeps full-precision master weights for learning. These temporary versions are used to make predictions.'},
+    forward:{number:'03',chapter:'MAKE A PREDICTION',eyebrow:'FROM PIXELS TO A BEST GUESS',title:['A signal','finds its way.'],description:'Layers find patterns, combine them, and make a guess. Follow the signal from the image to the ten possible answers.',detail:'Convolution finds local patterns. ReLU keeps positive responses. Pooling shrinks maps. Dense layers combine the evidence.'},
+    backward:{number:'04',chapter:'LEARN FROM THE MISTAKE',eyebrow:'THE ANSWER SENDS A SIGNAL BACK',title:['Wrong guesses','teach us.'],description:'The loss measures how far the guess was from the right answer. Gradients tell the network which adjustments could help.',detail:'The learning signal travels backward. A straight-through estimator lets it pass through the quantization step.'},
+    update:{number:'05',chapter:'ADJUST & TRY AGAIN',eyebrow:'ONE SMALL CHANGE AT A TIME',title:['Turn the knobs.','Try again.'],description:'Adam, the optimizer, uses the gradients to adjust the stored weights. The next batch gets a slightly different network.',detail:'All trainable layers are updated. Only the convolution weights are quantized for the next forward pass.'},
+    evaluate:{number:'06',chapter:'TAKE THE TEST',eyebrow:'NEW IMAGES. NO ANSWER SHEET.',title:['Now show','what you know.'],description:'The network sees held-out images. It makes predictions without changing its weights, so we can measure how well it learned.',detail:'Accuracy is the share of correct guesses. 80% means about 80 correct answers out of every 100 images.'},
+    results:{number:'07',chapter:'SEE THE BIG PICTURE',eyebrow:'EIGHT MODELS. ONE QUESTION.',title:['What did','we learn?'],description:'Compare how well each model recognized new images. Does using fewer weight levels still give good answers?',detail:'The simplest answer comes from comparing the test scores side by side.'}
   };
   const state={speedIndex:1,motionRate:1,seq:0,running:false,mode:'quick',paused:false,replaying:false,queue:[],replayQueue:[],history:[],snapshots:new Map(),results:new Map(),artifacts:[],logs:[],tables:[],seenDatasets:new Set(),current:null,sceneStarted:0,transitioning:false,transitionTl:null,revealTl:null,pauseAt:0,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,terminal:null,completed:false,networkFocused:false};
   let network=null, polling=false, lenis=null, toastTimer=null;
@@ -31,8 +31,8 @@
   function inspectNetwork(selection){
     if(selection){
       if(!state.networkFocused){
-        // A click can arrive as a cover starts moving. Return to the readable
-        // scene and retain the next topic instead of covering the inspector.
+        // Finish the local text change before opening a neuron detail.
+        // Inspection holds progression without hiding the network.
         if(state.transitioning){
           const next=state.transitionScene;
           clearTransition();
@@ -91,13 +91,13 @@
     $('chapter-number').textContent=d.number;$('chapter-label').textContent=d.chapter;$('eyebrow').textContent=d.eyebrow;titleLines(d.title);
     $('scene-description').textContent=d.description;$('scene-detail').textContent=d.detail;
     $('dataset-name').textContent=scene.dataset==='CIFAR10'?'CIFAR–10':'MNIST';$('dataset-kind').textContent=scene.dataset==='CIFAR10'?'COLOR PHOTOGRAPHS':'HANDWRITTEN DIGITS';$('dataset-icon').textContent=scene.dataset==='CIFAR10'?'◈':'✳';
-    if(scene.component==='data'&&scene.dataset==='CIFAR10'){$('scene-description').textContent='A whole new challenge: color photographs. The network now learns to tell apart planes, cars, birds, cats, and six more kinds of objects.';$('scene-detail').textContent='CIFAR-10 has more varied shapes, colors, and backgrounds than handwritten digits. These decorative cards signal the change; inspect the input for the real image.';titleLines(['A new world.','In full color.']);}
+    if(scene.component==='data'&&scene.dataset==='CIFAR10'){$('scene-description').textContent='A whole new challenge: color photographs. The network now learns to tell apart planes, cars, birds, cats, and six more kinds of objects.';$('scene-detail').textContent='CIFAR-10 has more varied shapes, colors, and backgrounds than handwritten digits. Inspect the input to see the real image being processed.';titleLines(['A new world.','In full color.']);}
     if(scene.component==='quantize'&&scene.bits===32){$('scene-description').textContent='This is our full-precision comparison model. Its convolution weights skip quantization and keep their original values.';$('scene-detail').textContent='Comparing other bit widths against this model helps us see what changes when the weights have fewer settings.';titleLines(['Every setting.','The baseline.']);}
     $('scene-position').textContent=`${String(Number(d.number)+1).padStart(2,'0')} / 08`;
     $('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':state.mode==='demo'?'ILLUSTRATIVE EVENTS / NOT REAL TRAINING':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';
-    const nv=ensureNetwork();nv?.setTheme(scene.dataset,scene.component);nv?.setActivity({...scene.event,component:scene.component});
+    const nv=ensureNetwork();nv?.setTheme(scene.dataset,scene.component);nv?.setActivity({...scene.event,bits:scene.bits,component:scene.component});
     const snapshot=scene.snapshot||state.snapshots.get(keyFor(scene));if(snapshot)nv?.setSnapshot(snapshot);
-    setNetworkFocus(false);nv?.resetView();
+    setNetworkFocus(false);
     if(scene.component==='results')renderResults();
     if(!state.replaying){state.seenDatasets.add(scene.dataset);state.seenScenes.add(`${scene.dataset}:${scene.component}`);state.history.push({...scene});if(state.history.length>16)state.history.shift();$('replay').disabled=state.history.length<2;}
   }
@@ -106,44 +106,37 @@
     state.transitionTl=null;
     state.transitionScene=null;
     state.transitioning=false;
-    if(window.gsap){
-      gsap.set('#transition',{visibility:'hidden'});
-      gsap.set('.transition-sheet',{x:0,y:0,xPercent:0,yPercent:102});
-      gsap.set('.transition-title',{opacity:0,x:0,y:0});
-      gsap.set('.scene-copy > *',{clearProps:'transform,opacity'});
-    }
+    document.querySelectorAll('.scene-copy-previous').forEach(el=>el.remove());
+    if(window.gsap)gsap.set('.scene-copy',{clearProps:'opacity'});
   }
   function transition(scene,force=false){
     if(state.networkFocused){state.queue.unshift(scene);return;}
     $('pause').disabled=false;
     if(state.transitioning&&!force)return;
     clearTransition();
+    const previous=document.querySelector('.scene-copy');
+    const canFade=!state.reduced&&window.gsap&&!$('scene').hidden&&scene.component!=='results';
+    // Only the explanation crossfades. The canvas keeps its position and camera.
+    const outgoing=canFade?previous.cloneNode(true):null;
+    if(outgoing){
+      outgoing.classList.add('scene-copy-previous');
+      outgoing.setAttribute('aria-hidden','true');
+      outgoing.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+      outgoing.querySelector('.scene-heading').classList.add('previous-heading');
+      previous.parentElement.append(outgoing);
+    }
+    applyScene(scene);
+    if(!canFade){if(scene.component==='results')revealResults();return;}
     state.transitioning=true;state.transitionScene=scene;
-    const datasetChanged=state.current&&state.current.dataset!==scene.dataset;
-    const d=sceneDefs[scene.component];
-    $('transition-kicker').textContent=scene.component==='results'?'THE EXPERIMENT IS COMPLETE':datasetChanged?'A DIFFERENT DATASET · A NEW CHALLENGE':`CHAPTER ${d.number} / ${d.chapter}`;
-    $('transition-word').textContent=datasetChanged?(scene.dataset==='CIFAR10'?'Hello, color.':'Back to digits.'):d.word;
-    const color=datasetChanged?(scene.dataset==='CIFAR10'?'#ffb58a':'#d8e7ee'):d.color;
-    if(state.reduced||!window.gsap){applyScene(scene);state.transitioning=false;return;}
-    const duration=scene.component==='results'?1.6:datasetChanged?1.45:1.25;
-    gsap.set('#transition',{visibility:'visible'});
-    // Reset pixel and percent coordinates independently. A CSS translateY and
-    // GSAP yPercent otherwise add together and can leave the cover offscreen.
-    gsap.set('.transition-sheet',{x:0,y:0,xPercent:0,yPercent:102,backgroundColor:color});
-    gsap.set('.transition-title',{opacity:0,x:0,y:22});
+    gsap.set(previous,{opacity:0});
     state.transitionTl=gsap.timeline({paused:state.paused,onComplete:()=>{
+      outgoing.remove();
+      gsap.set(previous,{clearProps:'opacity'});
       state.transitioning=false;state.transitionScene=null;
       state.sceneStarted=performance.now();
-      gsap.set('#transition',{visibility:'hidden'});
-      gsap.set('.scene-copy > *',{clearProps:'transform,opacity'});
-      if(scene.component==='results')revealResults();
     }})
-      .to('.transition-sheet',{yPercent:0,duration,ease:'power3.inOut'})
-      .to('.transition-title',{opacity:1,y:0,duration:.65,ease:'power2.out'})
-      .call(()=>applyScene(scene))
-      .to('.transition-title',{opacity:0,y:-16,duration:.55,ease:'power2.in'},'+=.7')
-      .to('.transition-sheet',{yPercent:-102,duration:duration*.95,ease:'power3.inOut'},'+=.06')
-      .fromTo('.scene-copy > *',{y:12,opacity:0},{y:0,opacity:1,stagger:.09,duration:.8,ease:'power2.out'},'-=.3');
+      .to(outgoing,{opacity:0,duration:.24,ease:'sine.inOut'},0)
+      .to(previous,{opacity:1,duration:.24,ease:'sine.inOut'},0);
   }
   function pump(){
     if(state.paused||state.networkFocused||state.transitioning)return;
@@ -170,7 +163,7 @@
     if(['completed','complete','finished','error','failed','stopped'].includes(name)){
       state.running=false;state.terminal=name;$('start').disabled=false;$('stop').disabled=true;$('run-mode').disabled=false;
       if(['completed','complete','finished'].includes(name)){state.completed=true;enqueue('results',state.current||{});$('metric-note').textContent='PROGRAM COMPLETE · Final results use the best held-out test accuracy for each model.';}
-      else{state.queue=[];state.replayQueue=[];state.replaying=false;clearTransition();state.revealTl?.kill();if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('playback-label').textContent=name==='stopped'?'PROGRAM STOPPED · PARTIAL RUN':'PROGRAM ERROR · SEE MESSAGES';toast(event.message||'The run ended before completion.');if(name==='error')showMessages(true);}
+      else{state.queue=[];state.replayQueue=[];state.replaying=false;clearTransition();state.revealTl?.kill();$('playback-label').textContent=name==='stopped'?'PROGRAM STOPPED · PARTIAL RUN':'PROGRAM ERROR · SEE MESSAGES';toast(event.message||'The run ended before completion.');if(name==='error')showMessages(true);}
     }
   }
   function receive(event){
@@ -209,7 +202,7 @@
     if(!state.paused){document.body.classList.remove('visuals-paused');state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];}
     state.latestScene=null;state.sceneArchive.clear();state.seenScenes.clear();state.replayReturn=null;network?.destroy();network=null;ensureNetwork();
     state.queue=[];state.replayQueue=[];state.history=[];state.snapshots.clear();state.results.clear();state.seenDatasets.clear();state.artifacts=[];state.logs=[];state.tables=[];$('table-list').replaceChildren();$('table-count').textContent='0';state.networkFocused=false;state.replaying=false;state.terminal=null;state.completed=false;clearTransition();state.revealTl?.kill();state.current=null;
-    if(window.gsap)gsap.set('#transition',{visibility:'hidden'});$('log').textContent='';$('message-count').textContent='0';syncPauseButton();$('replay').textContent='↶ Replay recent';$('replay').disabled=true;for(const name of ['dataset','bits','epoch','batch','loss','accuracy'])$('metric-'+name).textContent='—';$('progress-fill').style.width='0';$('results').hidden=true;$('scene').hidden=false;network?.setPaused(state.paused);setNetworkFocus(false);setModeNote();
+    $('log').textContent='';$('message-count').textContent='0';syncPauseButton();$('replay').textContent='↶ Replay recent';$('replay').disabled=true;for(const name of ['dataset','bits','epoch','batch','loss','accuracy'])$('metric-'+name).textContent='—';$('progress-fill').style.width='0';$('results').hidden=true;$('scene').hidden=false;network?.setPaused(state.paused);setNetworkFocus(false);setModeNote();
   }
   async function start(){
     if(state.running)return;if(!api()){toast('The desktop bridge is not connected. Launch with launch_visualizer.py.');return;}
@@ -284,10 +277,9 @@
   }
   function revealResults(){
     if(!window.gsap||state.reduced)return;
-    state.revealTl?.kill();state.revealTl=gsap.timeline().fromTo('.results-intro > *',{y:45,opacity:0},{y:0,opacity:1,duration:.9,stagger:.12,ease:'power3.out'}).fromTo('.score-card',{y:70,opacity:0,rotate:2},{y:0,opacity:1,rotate:0,duration:1,stagger:.08,ease:'power3.out'},'-=.4');
-    document.querySelectorAll('.score-number').forEach(el=>{const score={value:0};state.revealTl.to(score,{value:Number(el.dataset.score),duration:1.4,ease:'power2.out',onUpdate:()=>el.textContent=score.value.toFixed(1)},.65);});
-    document.querySelectorAll('.score-bar span').forEach(el=>state.revealTl.fromTo(el,{width:'0%'},{width:el.dataset.percent+'%',duration:1.5,ease:'power3.out'},.7));
-    state.revealTl.timeScale(state.motionRate);if(state.paused)state.revealTl.pause();
+    state.revealTl?.kill();
+    state.revealTl=gsap.timeline().fromTo('#results-content',{opacity:0},{opacity:1,duration:.24,ease:'sine.inOut'});
+    if(state.paused)state.revealTl.pause();
   }
   function setReduced(value){state.reduced=value;document.body.classList.toggle('reduced-motion',value);$('motion').setAttribute('aria-pressed',String(value));$('motion').textContent=value?'◉ Reduced':'◉ Motion';network?.setReducedMotion?.(value);if(value){state.transitionTl?.progress(1);state.revealTl?.progress(1);lenis?.stop();}else lenis?.start();}
   function showSpeed(open,restoreFocus=false){

@@ -1,4 +1,4 @@
-"""Independent regression checks for classroom text clearance and transition covers."""
+"""Regression checks for readable text and uninterrupted network transitions."""
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -15,10 +15,19 @@ def main():
         page.evaluate('lab.state.paused=true;lab.setReduced(true)')
         for width, height in [(1000, 700), (1366, 768), (1440, 940), (1920, 1080)]:
             page.set_viewport_size({'width': width, 'height': height})
+            scene_geometry = None
+            scene_palette = None
             for dataset in ['MNIST', 'CIFAR10']:
                 for scene in ['welcome', 'data', 'quantize', 'forward', 'backward', 'update', 'evaluate']:
                     page.evaluate("s=>lab.applyScene({component:s[0],dataset:s[1],bits:4,event:{}})", [scene, dataset])
                     page.wait_for_timeout(30)
+                    geometry = page.locator('#network-canvas').bounding_box()
+                    palette = page.evaluate("['--paper','--ink','--accent'].map(p=>getComputedStyle(document.body).getPropertyValue(p))")
+                    if scene_geometry is not None and any(abs(geometry[key] - scene_geometry[key]) > 1 for key in geometry):
+                        failures.append(f'{width}x{height} {dataset}/{scene}: scene change moved the network')
+                    if scene_palette is not None and palette != scene_palette:
+                        failures.append(f'{dataset}/{scene}: scene change altered palette')
+                    scene_geometry, scene_palette = geometry, palette
                     errors = page.evaluate('''() => {
                         const ids=['scene-title','scene-description','scene-detail'];
                         const rect=id=>document.getElementById(id).getBoundingClientRect();
@@ -34,28 +43,29 @@ def main():
                         return errors;
                     }''')
                     failures.extend(f'{width}x{height} {dataset}/{scene}: {e}' for e in errors)
-        # Sample actual GSAP intermediate states. Transition lettering must stay
-        # on its opaque panel, never directly over the exposed graph.
+        # Sample actual GSAP intermediate states: only copy may crossfade.
         page.set_viewport_size({'width': 1366, 'height': 768})
         page.evaluate("lab.state.paused=false;lab.setReduced(false);lab.transition({component:'data',dataset:'MNIST',bits:4,event:{}},true);void lab.state.transitionTl.pause(0)")
         duration = page.evaluate('lab.state.transitionTl.duration()')
+        assert duration <= .5, 'Description transition is distracting/too long'
+        baseline = page.locator('#network-canvas').bounding_box()
         for step in range(1, 60):
             page.evaluate('t=>{lab.state.transitionTl.time(t,false);}', duration * step / 60)
             violations = page.evaluate('''() => {
-                const title=document.querySelector('.transition-title');
                 const overlay=document.getElementById('transition');
-                if(Number(getComputedStyle(title).opacity)<.05||getComputedStyle(overlay).visibility==='hidden')return [];
-                const sheet=document.querySelector('.transition-sheet'),s=sheet.getBoundingClientRect();
                 const errors=[];
-                for(const id of ['transition-kicker','transition-word']){
-                    const r=document.getElementById(id).getBoundingClientRect();
-                    if(r.top<s.top-1||r.bottom>s.bottom+1||r.left<s.left-1||r.right>s.right+1)errors.push(id+' escaped transition cover');
+                if(overlay&&getComputedStyle(overlay).visibility!=='hidden'&&getComputedStyle(overlay).display!=='none')errors.push('Full-screen cover is visible');
+                for(const id of ['scene','network-stage','network-canvas']){
+                    const s=getComputedStyle(document.getElementById(id));
+                    if(Number(s.opacity)!==1||s.visibility==='hidden'||s.display==='none')errors.push(id+' disappears during text transition');
+                    if(s.transform!=='none')errors.push(id+' moves during text transition');
                 }
-                const color=getComputedStyle(sheet).backgroundColor;
-                if(color==='transparent'||color==='rgba(0, 0, 0, 0)')errors.push('Transition cover is transparent');
                 return errors;
             }''')
             failures.extend(f'Transition frame {step}: {e}' for e in violations)
+            current = page.locator('#network-canvas').bounding_box()
+            if any(abs(current[key] - baseline[key]) > 1 for key in baseline):
+                failures.append(f'Transition frame {step}: network geometry changed')
         text = page.locator('body').inner_text()
         for broken in ['\u00c2\u00b7', '\u00e2\u20ac', '\u00e2\u2020']:
             if broken in text:
@@ -63,7 +73,7 @@ def main():
         browser.close()
     if failures:
         raise AssertionError('\n'.join(failures))
-    print('All 56 scene/dataset/window combinations have clear text; 59 intermediate transition frames retain an opaque title cover.')
+    print('All 56 scene/dataset/window combinations have clear text; 59 crossfade frames keep the network visible and stationary.')
 
 
 if __name__ == '__main__':

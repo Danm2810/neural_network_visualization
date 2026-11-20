@@ -1,6 +1,6 @@
 # Neural Network Quantization Lab
 
-A classroom desktop application that runs the original PyTorch quantization experiment and explains its progress with an interactive neuron diagram, measured activations and weights, GSAP transitions, and readable results.
+A classroom desktop application that runs the original PyTorch quantization experiment and explains its progress with a progressively revealed interactive network, measured activations and weights, subtle text crossfades, and readable results.
 
 ## Run on another Windows computer
 

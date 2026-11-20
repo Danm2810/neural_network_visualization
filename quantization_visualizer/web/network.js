@@ -4,14 +4,11 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const finite = v => typeof v === 'number' && Number.isFinite(v);
   const fmt = v => finite(v) ? (Math.abs(v) < .0001 && v !== 0 ? v.toExponential(2) : v.toFixed(4)) : 'not sampled';
-  const PALETTES = {
-    MNIST: {positive: '#a6f2d2', negative: '#b49bff', accent: '#d6ff69', dim: '#477b78', ink: '#e6f6eb'},
-    CIFAR10: {positive: '#ffbe77', negative: '#ff74bd', accent: '#a0ddff', dim: '#955d6d', ink: '#fff1e5'}
-  };
-  const LIGHT_PALETTES = {
-    MNIST: {positive: '#18705c', negative: '#7853ac', accent: '#245b8b', dim: '#55796c', ink: '#233a37'},
-    CIFAR10: {positive: '#a54d16', negative: '#a72d69', accent: '#245b8b', dim: '#925d54', ink: '#3e2525'}
-  };
+  // Values retain one visual meaning across every dataset and operation.
+  const DARK_PALETTE = {positive: '#a6d6c6', negative: '#a7bdcb', accent: '#b8ded2', dim: '#66867d', ink: '#e6f0eb'};
+  const LIGHT_PALETTE = {positive: '#18705c', negative: '#607d8b', accent: '#245b68', dim: '#8baca3', ink: '#233a37'};
+  const PALETTES = {MNIST: DARK_PALETTE, CIFAR10: DARK_PALETTE};
+  const LIGHT_PALETTES = {MNIST: LIGHT_PALETTE, CIFAR10: LIGHT_PALETTE};
   const DESCRIPTORS = [
     {name: 'input', title: 'THE IMAGE', subtitle: '3 × 32 × 32 pixels', count: 1, x: 95, cols: 1},
     {name: 'conv1', title: 'FIND EDGES', subtitle: '32 feature-map channels', count: 32, x: 290, cols: 4},
@@ -34,8 +31,10 @@
       this.snapshot = null;
       this.layers = new Map();
       this.dataset = 'MNIST';
-      this.palette = PALETTES.MNIST;
-      this.component = 'forward';
+      this.bits = 32;
+      this.palette = LIGHT_PALETTE;
+      this.light = true;
+      this.component = 'welcome';
       this.stage = 'ready';
       this.paused = false;
       this.reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -44,6 +43,12 @@
       this.clock = 0;
       this.motionRate = 1;
       this.activityAt = -10;
+      // A presentation reveal of the fixed architecture, never a change to the model.
+      this.construction = 0;
+      this.constructionTarget = 0;
+      this.constructionFrom = 0;
+      this.constructionElapsed = 0;
+      this.constructionDuration = 0;
       this.lastFrame = 0;
       this.selected = null;
       this.inspectorScroll = 0;
@@ -57,6 +62,10 @@
       this.imageCanvas = null;
       this.camera = {zoom: 1, x: 0, y: 0};
       this.target = {...this.camera};
+      this.cameraManual = false;
+      this.cameraFocus = null;
+      this.shotKey = null;
+      this.stageClock = 0;
       this.dirty = true;
       this.nodes = [];
       this.nodeByKey = new Map();
@@ -132,7 +141,7 @@
         this.pointer = p;
         if (this.drag) {
           const dx = p.x - this.drag.start.x, dy = p.y - this.drag.start.y;
-          if (Math.abs(dx) + Math.abs(dy) > 5) this.drag.moved = true;
+          if (Math.abs(dx) + Math.abs(dy) > 5) { this.drag.moved = true; this.cameraManual = true; }
           this.target.x = this.drag.x + dx;
           this.target.y = this.drag.y + dy;
           this.dirty = true;
@@ -156,17 +165,19 @@
         else if (e.key.toLowerCase() === 'r') { this.resetView(); e.preventDefault(); }
         else if (e.key === '+' || e.key === '=') { this._zoom(1.2); e.preventDefault(); }
         else if (e.key === '-') { this._zoom(1 / 1.2); e.preventDefault(); }
-        else if (e.key === 'Enter' && !this.selected) { this._select(this.nodeByKey.get('conv1:0')); e.preventDefault(); }
+        else if (e.key === 'Enter' && !this.selected) { this._select(this._firstInspectable()); e.preventDefault(); }
         else if (e.key.startsWith('Arrow')) {
           e.preventDefault();
-          const current = this.selected || this.nodeByKey.get('conv1:0');
+          const current = this.selected || this._firstInspectable();
           let l = current.layerIndex, index = current.index;
-          if (e.key === 'ArrowRight') l = Math.min(4, l + 1);
-          if (e.key === 'ArrowLeft') l = Math.max(1, l - 1);
+          const lastLayer = Math.max(0, ...this.nodes.filter(n => this._nodeVisibility(n) > .65).map(n => n.layerIndex));
+          if (e.key === 'ArrowRight') l = Math.min(lastLayer, l + 1);
+          if (e.key === 'ArrowLeft') l = Math.max(0, l - 1);
           if (e.key === 'ArrowUp') index--;
           if (e.key === 'ArrowDown') index++;
           index = (index + DESCRIPTORS[l].count) % DESCRIPTORS[l].count;
-          this._select(this.nodeByKey.get(`${DESCRIPTORS[l].name}:${index}`));
+          const candidates = this.nodes.filter(n => n.layerIndex === l && this._nodeVisibility(n) > .65);
+          this._select(candidates.find(n => n.index === index) || candidates[0] || current);
         }
       });
     }
@@ -193,6 +204,7 @@
         y: (node.y - 250) * this.scaleY * this.camera.zoom + this.height / 2 + this.camera.y};
     }
     _zoom(factor, p = {x: this.width / 2, y: this.height / 2}) {
+      this.cameraManual = true;
       const old = this.target.zoom, next = clamp(old * factor, .65, 4.5), ratio = next / old;
       this.target.x = p.x - this.width / 2 - (p.x - this.width / 2 - this.target.x) * ratio;
       this.target.y = p.y - this.height / 2 - (p.y - this.height / 2 - this.target.y) * ratio;
@@ -203,6 +215,7 @@
       if (this.selected && this._inInspector(p)) return null;
       let winner = null, best = 14;
       for (const node of this.nodes) {
+        if (this._nodeVisibility(node) < .65) continue;
         const n = this._project(node), distance = Math.hypot(n.x - p.x, n.y - p.y);
         const radius = node.name === 'input' ? 40 * this.baseScale * this.camera.zoom : 12;
         if (distance < radius && distance < best + (node.name === 'input' ? radius : 0)) { winner = node; best = distance; }
@@ -213,6 +226,7 @@
     _inspectorWidth() { return clamp(this.width * .32, 270, 360); }
 
     _select(node) {
+      this.cameraManual = true;
       this.selected = node;
       this.inspectorScroll = 0;
       this.mapHover = null;
@@ -237,6 +251,7 @@
       if (this.paused) { this.pendingSnapshot = event; return; }
       if (event.dataset) this.setTheme(event.dataset, this.stage);
       this.snapshot = event;
+      this.bits = event.bits ?? this.bits;
       this.layers = new Map(event.layers.map(layer => [layer.name, layer]));
       if (event.input?.pixels?.length >= 32 * 32 * 3) {
         this.imageCanvas = document.createElement('canvas');
@@ -252,6 +267,7 @@
     }
 
     setActivity(event = {}) {
+      this.bits = event.bits ?? this.bits;
       if (event.type === 'status') {
         this.active = ['running', 'starting'].includes(event.status);
         if (!this.active) this.activityAt = -10;
@@ -264,17 +280,53 @@
     }
     setTheme(dataset = 'MNIST', stage = 'forward') {
       const nextDataset = String(dataset).toUpperCase().replace(/[^A-Z0-9]/g, '') === 'CIFAR10' ? 'CIFAR10' : 'MNIST';
-      if (nextDataset !== this.dataset) {
+      const datasetChanged = nextDataset !== this.dataset;
+      const stageChanged = stage !== this.stage;
+      if (datasetChanged) {
         this.snapshot = null;
         this.layers.clear();
         this.imageCanvas = null;
         for (const node of this.nodes) node.value = 0;
       }
       this.dataset = nextDataset;
-      this.light = ['data', 'update', 'evaluate', 'results'].includes(stage);
-      this.palette = (this.light ? LIGHT_PALETTES : PALETTES)[this.dataset];
+      this.light = true;
+      this.palette = LIGHT_PALETTE;
       this.stage = stage;
+      if (datasetChanged || stage === 'welcome') this.resetConstruction();
+      if (stageChanged || datasetChanged) {
+        this.stageClock = this.clock;
+        this.shotKey = null;
+        if (!this.selected && !this.drag) this.cameraManual = false;
+        if (stage === 'quantize') this.setConstructionProgress(Math.max(this.constructionTarget, 2), {duration: 6});
+        if (stage === 'forward') this.setConstructionProgress(4, {duration: this.construction < 2 ? 8 : 6});
+        // A user can jump straight to these chapters or replay only recent work.
+        if (['backward', 'update', 'evaluate', 'results'].includes(stage)) this.setConstructionProgress(4, {immediate: true});
+      }
       this.dirty = true;
+    }
+    // 0 = input; 1 = edges; 2 = shapes; 3 = combined clues; 4 = class scores.
+    // Fractional values allow either a scroll driver or a timed story to reveal
+    // channels one by one while retaining their measured values and identity.
+    setConstructionProgress(value, options = {}) {
+      const next = clamp(Number(value) || 0, 0, 4);
+      if (next === this.constructionTarget && !options.immediate) return;
+      this.constructionFrom = this.construction;
+      this.constructionTarget = next;
+      this.constructionElapsed = 0;
+      this.constructionDuration = Math.max(.45, Number(options.duration) || Math.abs(next - this.construction) * 2.4);
+      if (options.immediate || this.reduced) this.construction = next;
+      if (this.selected && this._nodeVisibility(this.selected) < .65) this._select(null);
+      this.dirty = true;
+    }
+    resetConstruction() { this.setConstructionProgress(0, {immediate: true}); }
+    _nodeVisibility(node) {
+      if (node.layerIndex === 0) return 1;
+      const progress = this.construction - node.layerIndex + 1;
+      const stagger = node.index / Math.max(1, DESCRIPTORS[node.layerIndex].count - 1) * .65;
+      return clamp((progress - stagger) / .35, 0, 1);
+    }
+    _firstInspectable() {
+      return this.nodes.find(n => n.name === 'conv1' && this._nodeVisibility(n) > .65) || this.nodes[0];
     }
     setPaused(value) {
       this.paused = Boolean(value);
@@ -284,13 +336,52 @@
       this.dirty = true;
     }
     setSpeed(value) { this.motionRate = clamp(Number(value) || 1, .25, 3); }
-    setReducedMotion(value) { this.reduced = Boolean(value); this.dirty = true; }
+    setReducedMotion(value) {
+      this.reduced = Boolean(value);
+      if (this.reduced) {
+        this.construction = this.constructionTarget;
+        if (!this.selected && !this.cameraManual) { this.target = {zoom: 1, x: 0, y: 0}; this.camera = {...this.target}; }
+      }
+      this.shotKey = null;
+      this.dirty = true;
+    }
     resetView() { this.target = {zoom: 1, x: 0, y: 0}; this._select(null); }
     destroy() {
       this.alive = false;
       cancelAnimationFrame(this.frame);
       this.resizeObserver.disconnect();
       for (const [type, fn, options] of this.listeners) this.canvas.removeEventListener(type, fn, options);
+    }
+
+    // Deliberate shots follow the teaching sequence, never individual telemetry
+    // samples. Each shot holds long enough to read before easing to the next.
+    _directCamera() {
+      if (this.paused || this.reduced || this.selected || this.drag || this.cameraManual) return;
+      const elapsed = this.clock - this.stageClock;
+      let layer = null, zoom = 1;
+      if (this.construction < this.constructionTarget) {
+        layer = clamp(Math.ceil(this.construction + .01), 1, 4);
+        zoom = layer === 3 ? 1.08 : layer === 4 ? 1.2 : 1.45;
+      } else if (this.stage === 'data' || this.stage === 'welcome') {
+        layer = 0; zoom = 1.7;
+      } else if (elapsed < 8) {
+        const step = Math.min(3, Math.floor(elapsed / 2));
+        if (this.stage === 'forward') layer = [1, 2, 3, 4][step];
+        if (this.stage === 'backward') layer = [4, 3, 2, 1][step];
+        if (this.stage === 'quantize') layer = step < 2 ? 1 : 2;
+        if (this.stage === 'update') layer = [2, 3, 1, 4][step];
+        if (this.stage === 'evaluate') layer = step < 2 ? 0 : 4;
+        zoom = layer === 3 ? 1.08 : layer === 4 ? 1.2 : 1.45;
+      }
+      const key = `${this.stage}:${layer}:${this.width}:${this.height}`;
+      if (key === this.shotKey) return;
+      this.shotKey = key;
+      this.cameraFocus = layer;
+      this.target = layer === null ? {zoom: 1, x: 0, y: 0} : {
+        zoom, x: -(DESCRIPTORS[layer].x - 560) * this.scaleX * zoom, y: 0
+      };
+      this.hover = null;
+      this.dirty = true;
     }
 
     _frame(timestamp) {
@@ -300,9 +391,21 @@
       this.valueBlend = 1 - Math.exp(-dt * this.motionRate * 7.7);
       if (!this.paused && !this.reduced) this.clock += dt * this.motionRate;
       let moving = false;
+      if (!this.paused && this.construction !== this.constructionTarget) {
+        this.constructionElapsed += dt * this.motionRate;
+        const t = this.reduced ? 1 : clamp(this.constructionElapsed / this.constructionDuration, 0, 1);
+        this.construction = this.constructionFrom + (this.constructionTarget - this.constructionFrom) * t;
+        if (t === 1) this.construction = this.constructionTarget;
+        moving = true;
+      }
+      this._directCamera();
+      const manualCamera = this.cameraManual || this.selected || this.drag;
       for (const key of ['zoom', 'x', 'y']) {
         const delta = this.target[key] - this.camera[key];
-        if (Math.abs(delta) > .001) { this.camera[key] += delta * (this.reduced ? 1 : 1 - Math.exp(-dt * 10)); moving = true; }
+        if (Math.abs(delta) > .001 && (!this.paused || manualCamera)) {
+          this.camera[key] += delta * (this.reduced ? 1 : 1 - Math.exp(-dt * (manualCamera ? 10 : 2.2) * (manualCamera ? 1 : this.motionRate)));
+          moving = true;
+        }
       }
       if (this.dirty || moving || (!this.paused && !this.reduced && this.active)) {
         this._draw();
@@ -342,10 +445,17 @@
         y: u ** 3 * a.y + 3 * u * u * t * a.y + 3 * u * t * t * b.y + t ** 3 * b.y};
     }
     _drawLink(src, dst, color, alpha, width = .65, packet = null) {
+      const visibility = Math.min(this._nodeVisibility(src), this._nodeVisibility(dst));
+      if (visibility <= 0) return;
       const c = this.ctx, a = this._project(src), b = this._project(dst), bend = (b.x - a.x) * .45;
+      alpha *= visibility;
       c.globalAlpha = alpha; c.strokeStyle = color; c.lineWidth = width;
-      c.beginPath(); c.moveTo(a.x, a.y); c.bezierCurveTo(a.x + bend, a.y, b.x - bend, b.y, b.x, b.y); c.stroke();
-      if (packet !== null) {
+      c.beginPath(); c.moveTo(a.x, a.y);
+      if (visibility < 1) {
+        for (let step = 1; step <= 20; step++) { const p = this._curve(a, b, visibility * step / 20); c.lineTo(p.x, p.y); }
+      } else c.bezierCurveTo(a.x + bend, a.y, b.x - bend, b.y, b.x, b.y);
+      c.stroke();
+      if (packet !== null && packet <= visibility) {
         const p = this._curve(a, b, packet);
         c.globalAlpha = alpha * 2.5;
         c.fillStyle = color; c.beginPath(); c.arc(p.x, p.y, 2.2, 0, Math.PI * 2); c.fill();
@@ -376,12 +486,13 @@
       const c = this.ctx, w = this.width, h = this.height, palette = this.palette;
       c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); c.clearRect(0, 0, w, h);
       const gradient = c.createRadialGradient(w * .5, h * .5, 10, w * .5, h * .5, w * .65);
-      gradient.addColorStop(0, this.dataset === 'MNIST' ? 'rgba(56,108,91,.10)' : 'rgba(130,49,90,.12)');
+      gradient.addColorStop(0, 'rgba(56,108,91,.06)');
       gradient.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = gradient; c.fillRect(0, 0, w, h);
       const activeStrength = this.active ? Math.max(.12, Math.exp(-(this.clock - this.activityAt) * .25)) : 0;
       const reverse = this.component === 'backward';
+      this._drawOperation();
       for (const link of this.links) {
-        const packet = this.active && !this.reduced ? (this.clock * .16 + link.seed) % 1 : null;
+        const packet = this.active && !this.reduced && ['forward', 'backward', 'evaluate'].includes(this.component) ? (this.clock * .16 + link.seed) % 1 : null;
         const finalPacket = packet === null ? null : reverse ? 1 - packet : packet;
         this._drawLink(link.src, link.dst, palette.dim, this.selected ? .08 : .18 + activeStrength * .13, .7, finalPacket);
       }
@@ -392,6 +503,8 @@
           .3 + Math.abs(edge.weight) / maxWeight * .4, .6 + Math.abs(edge.weight) / maxWeight * 1.7);
       }
       for (const node of this.nodes) {
+        const visibility = this._nodeVisibility(node);
+        if (visibility <= 0) continue;
         const p = this._project(node);
         if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
         if (node.name === 'input') { this._drawInput(p); continue; }
@@ -404,20 +517,32 @@
         const strength = isMeasured ? Math.tanh(Math.abs(node.value)) : 0;
         const color = node.value < 0 ? palette.negative : palette.positive;
         const focused = this.selected === node || this.hover === node;
-        const radius = clamp(node.r * this.baseScale * this.camera.zoom, 2.2, 18);
+        const radius = clamp(node.r * this.baseScale * this.camera.zoom, 2.2, 18) * (.35 + .65 * visibility);
         if (focused || strength > .3) {
           const glow = c.createRadialGradient(p.x, p.y, radius * .2, p.x, p.y, radius * (focused ? 3.4 : 2.3));
           glow.addColorStop(0, color + (focused ? '77' : '35')); glow.addColorStop(1, color + '00');
           c.fillStyle = glow; c.beginPath(); c.arc(p.x, p.y, radius * 3.4, 0, Math.PI * 2); c.fill();
         }
         c.beginPath(); c.arc(p.x, p.y, radius, 0, Math.PI * 2);
-        c.fillStyle = isMeasured ? color : '#172229'; c.globalAlpha = isMeasured ? .3 + strength * .7 : .8; c.fill();
+        c.fillStyle = isMeasured ? color : '#e0e9e3'; c.globalAlpha = visibility * (isMeasured ? .3 + strength * .7 : .8); c.fill();
         c.globalAlpha = 1; c.lineWidth = focused ? 2 : .8; c.strokeStyle = focused ? palette.accent : isMeasured ? color : palette.dim; c.stroke();
+        if (this.active && !this.reduced && ['quantize', 'update'].includes(this.component) && (this.component === 'update' || (this.bits < 32 && node.name.startsWith('conv')))) {
+          const cycle = (this.clock * .45 - node.index * .017 + node.layerIndex * .13) % 1;
+          if (cycle >= 0 && cycle < .4) {
+            c.globalAlpha = visibility * (1 - cycle / .4) * .55;
+            c.strokeStyle = palette.accent;
+            c.beginPath(); c.arc(p.x, p.y, radius + 2 + cycle * 12, 0, Math.PI * 2); c.stroke(); c.globalAlpha = 1;
+          }
+        }
         if (this.camera.zoom > 2 || node.name === 'fc2') this._text(String(node.index), p.x + (node.name === 'fc2' ? radius + 10 : 0), p.y,
           node.name === 'fc2' ? 10 : 8, node.name === 'fc2' ? '#b8c3ce' : '#0b1619', node.name === 'fc2' ? 'left' : 'center', 600);
       }
-      for (const d of DESCRIPTORS) {
+      for (const [layerIndex, d] of DESCRIPTORS.entries()) {
+        if (layerIndex > 0 && this.construction <= layerIndex - 1) continue;
         const p = this._project({x: d.x, y: 42}), bottom = this._project({x: d.x, y: 450});
+        if (p.x < 85 || p.x > w - 85) continue;
+        // Keep labels readable when the guided camera moves closer.
+        p.y = Math.max(34, p.y); bottom.y = Math.min(h - 36, bottom.y);
         this._text(d.title, p.x, p.y, 10, palette.ink, 'center', 700);
         this._text(d.subtitle, p.x, p.y + 18, 10, '#8eaaa9', 'center');
         if (d.name === 'conv1' || d.name === 'conv2') this._text(`${this.snapshot?.bits ?? '—'}-bit weights · ReLU → pool`, bottom.x, bottom.y, 9, palette.negative, 'center');
@@ -429,12 +554,47 @@
       else if (this.hover) this._drawTooltip();
     }
 
+    _drawOperation() {
+      const c = this.ctx;
+      const building = this.construction < this.constructionTarget;
+      const layerIndex = clamp(Math.ceil(this.construction), 1, 4);
+      const explanations = [
+        'The input image becomes a grid of pixel values.',
+        'Adding edge detectors · each channel scans local 3 × 3 patches.',
+        'Adding shape detectors · channels combine the earlier patterns.',
+        'Adding 128 neurons · combine pooled features into evidence.',
+        'Adding 10 outputs · one raw score for each possible class.'
+      ];
+      let caption = building ? explanations[layerIndex] : this.construction === 0 ? explanations[0] : PHASE[this.component] || 'Explore the fixed network, one layer at a time';
+      if (this.component === 'quantize' && !building) caption = this.bits === 32 ? 'Full-precision baseline · convolution weights keep their original settings.' : 'Weight settings become discrete · the network connections stay in place.';
+      if (this.component === 'backward') caption = 'Error signals move right to left · gradients guide the next adjustment.';
+      if (this.component === 'update') caption = 'Small rings mark weight adjustments · the architecture stays the same.';
+      if (this.component === 'evaluate') caption = 'Signals travel forward on held-out images · no weights are updated.';
+      this._text(caption, this.width / 2, 13, 10, this.palette.ink, 'center');
+      if (this.selected || this.construction === 0) return;
+      let highlighted = building ? layerIndex : this.component === 'quantize' ? 1 + Math.floor(this.clock * .3) % 2 : this.component === 'evaluate' ? 4 : null;
+      if (['forward', 'backward'].includes(this.component) && !building) {
+        const step = Math.floor(this.clock * .65) % 4;
+        highlighted = this.component === 'backward' ? 4 - step : 1 + step;
+      }
+      if (!this.cameraManual && !this.reduced && this.cameraFocus !== null && this.cameraFocus > 0) highlighted = this.cameraFocus;
+      if (highlighted === null) return;
+      const d = DESCRIPTORS[highlighted], a = this._project({x: d.x - 80, y: 80}), b = this._project({x: d.x + 80, y: 425});
+      c.fillStyle = '#18705c09'; c.strokeStyle = '#18705c33'; c.lineWidth = 1;
+      this._roundRect(a.x, a.y, b.x - a.x, b.y - a.y, 12); c.fill(); c.stroke();
+    }
+
     _drawInput(p) {
       const c = this.ctx, size = clamp(78 * this.baseScale * this.camera.zoom, 25, 150);
       c.save(); this._roundRect(p.x - size / 2, p.y - size / 2, size, size, 10); c.clip();
-      c.fillStyle = '#132026'; c.fillRect(p.x - size / 2, p.y - size / 2, size, size);
+      c.fillStyle = '#e0e9e3'; c.fillRect(p.x - size / 2, p.y - size / 2, size, size);
       if (this.imageCanvas) { c.imageSmoothingEnabled = false; c.drawImage(this.imageCanvas, p.x - size / 2, p.y - size / 2, size, size); }
       else { this._text('IMAGE', p.x, p.y, 11, '#829b98', 'center'); }
+      if (this.component === 'data' && this.active) {
+        const scan = this.reduced ? .5 : (this.clock * .18) % 1;
+        c.fillStyle = '#18705c25';
+        c.fillRect(p.x - size / 2, p.y - size / 2 + scan * (size - 8), size, 8);
+      }
       c.restore();
       this._roundRect(p.x - size / 2, p.y - size / 2, size, size, 10); c.strokeStyle = this.palette.accent; c.lineWidth = 1; c.stroke();
       if (this.snapshot?.input) {
@@ -493,8 +653,16 @@
       c.save(); c.beginPath(); c.rect(x + 1, top + 43, width - 2, Math.max(1, this.height - 130)); c.clip();
       c.translate(0, -this.inspectorScroll);
       let y = top + 53;
+      const descriptions = {
+        input: 'The input is the image represented as numbers. The same pixels feed every first-layer filter.',
+        conv1: 'This channel uses a learned 3 × 3 filter across the image to respond to local patterns such as edges. ReLU keeps positive responses; pooling shrinks the map.',
+        conv2: 'This channel combines patterns from the first convolution layer into more complex features. Its learned filters operate on feature maps, rather than the original pixels.',
+        fc1: 'This neuron combines the pooled features using 4,096 weighted inputs and a bias. ReLU then keeps its positive response as evidence for the next layer.',
+        fc2: 'This output neuron combines 128 hidden activations into one class score. The largest score determines the predicted class; the raw score is not a probability.'
+      };
+      y = this._wrap(descriptions[node.name], x + 18, y, inner, 11, 16, '#d5e2dc') + 10;
       if (!layer) {
-        y = this._wrap(node.name === 'input' ? 'This is the first image of the sampled batch. Images are resized to 32 × 32 and supplied in three channels.' : 'Run the program to inspect measured activations and weights. The overview shows the actual architecture, but values are not yet available.', x + 18, y, inner);
+        y = this._wrap(node.name === 'input' ? 'This is the first image of the sampled batch. Images are resized to 32 × 32 and supplied in three channels.' : 'Run the program to inspect measured activations and weights. The construction reveals the fixed architecture for teaching; training changes weights, not the number of neurons.', x + 18, y, inner);
         if (node.name === 'input' && this.imageCanvas) {
           c.imageSmoothingEnabled = false; c.drawImage(this.imageCanvas, x + 18, y + 10, Math.min(inner, 200), Math.min(inner, 200));
         }
@@ -524,7 +692,7 @@
       c.restore();
       const footerY = this.height - 54;
       c.fillStyle = '#0a1117'; c.fillRect(x + 1, footerY - 8, width - 2, 40);
-      const detail = this.mapHover ? this.mapHover.kind === 'activation' ? `Neuron [${this.mapHover.row}, ${this.mapHover.col}] = ${fmt(this.mapHover.value)}` : `Weight ${this.mapHover.source} = ${fmt(this.mapHover.value)}` : 'Mint / peach: positive · violet / pink: negative';
+      const detail = this.mapHover ? this.mapHover.kind === 'activation' ? `Neuron [${this.mapHover.row}, ${this.mapHover.col}] = ${fmt(this.mapHover.value)}` : `Weight ${this.mapHover.source} = ${fmt(this.mapHover.value)}` : 'Teal: positive · slate: negative';
       this._text(detail, x + 18, footerY + 4, 10, this.palette.ink);
       this._text(this.inspectorMaxScroll > 0 ? 'Scroll this panel for more · brighter = larger magnitude' : 'Brighter = larger magnitude · sampled values', x + 18, footerY + 20, 9, '#8eaaa9');
       c.restore();

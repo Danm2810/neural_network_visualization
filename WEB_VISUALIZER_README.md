@@ -6,7 +6,7 @@ On a fresh machine, run `./setup_visualizer.ps1`. Python and Microsoft Edge WebV
 
 ## Presentation controls
 
-Each slide stays readable after its entrance transition finishes for at least 20 seconds on Slow, 12 seconds on Normal, or 8 seconds on Fast, including in reduced-motion mode. Transitions move more slowly, and the slide stays longer when no next training event is available. Training can run ahead without shortening this reading time.
+Each explanation stays readable for at least 20 seconds on Slow, 12 seconds on Normal, or 8 seconds on Fast, including in reduced-motion mode. Text changes with a subtle 240 ms crossfade while the network stays visible in a fixed position. There are no full-screen chapter covers. A step stays longer when no next training event is available. Training can run ahead without shortening this reading time.
 
 * **Start learning:** choose Quick / real data, Full experiment, or Illustrative demo.
 * **Pause visuals:** freeze the presentation to discuss a scene. Training and live measurements continue. Resume continues the bounded visual story. Pause/Resume is a global visual playback choice changed only by that button or Space. Inspection holds the reading timer separately. Closing details, Go live, replay, and starting or stopping Python never override the playback choice.
@@ -17,7 +17,9 @@ Each slide stays readable after its entrance transition finishes for at least 20
 
 Scroll over the network to zoom, drag to pan, and select a node to inspect its data. Reset view restores the overview. Keyboard: arrows select nodes, Enter opens details, Escape closes them, +/- zoom, R resets. The selected inspector can be scrolled to reach spatial activations and incoming weights.
 
-The presentation moves through data, quantization, prediction, backward gradients, weight updates, evaluation, and results. MNIST and CIFAR-10 have contrasting visual worlds. Animated particles explain direction and type of computation; they are not measured hardware signals. Live metrics can be ahead of the visual story.
+The guided camera moves closer to new layers, follows predictions forward and gradients backward, visits weight updates, and pulls back to the overview. Shots follow the paced explanation rather than every incoming measurement. Manual zoom, pan, inspection, or Reset view takes priority until the next explanation. Pause freezes guided movement; reduced motion uses a stationary overview. Text and controls remain stationary during camera moves.
+
+The presentation moves through data, quantization, prediction, backward gradients, weight updates, evaluation, and results. MNIST and CIFAR-10 share a consistent paper, teal, and slate palette. The network is progressively revealed as a teaching aid: its actual architecture is fixed throughout training. Once revealed, its layers remain in place while activity illustrates the current operation. Animated particles explain direction and type of computation; they are not measured hardware signals. Live metrics can be ahead of the visual story.
 
 ## What the network shows
 
@@ -51,4 +53,4 @@ Browser checks in `test_web_presentation.py --live` exercise the actual Quick wo
 
 ### Presentation speed
 
-Click the current Speed button to open the rounded slider above it to choose **Slow**, **Normal** (the default), or **Fast**. It changes the network signal motion and results reveal, including animations already playing. Slide transitions always keep their original speed. The three rates are 0.6×, 1×, and 1.5×. Slides allow 20, 12, or 8 seconds of reading time respectively after their entrance; training and live measurements run independently. The slider supports dragging, clicking, and the arrow keys. Pause and reduced-motion settings remain in effect at every speed.
+Click the current Speed button to open the rounded slider above it to choose **Slow**, **Normal** (the default), or **Fast**. It changes network construction and signal motion, including animations already playing. Text crossfades stay brief at every speed. The three rates are 0.6×, 1×, and 1.5×. Explanations allow 20, 12, or 8 seconds of reading time respectively; training and live measurements run independently. The slider supports dragging, clicking, and the arrow keys. Pause and reduced-motion settings remain in effect at every speed.

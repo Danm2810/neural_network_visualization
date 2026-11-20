@@ -97,15 +97,15 @@ def main():
         assert page.evaluate('lab.network.reduced')
         # Returning from replay must restore the current final scene, not get
         # stranded on an earlier snapshot when the worker has already finished.
-        page.evaluate("lab.replay(); for(let i=0;i<24;i++){lab.state.sceneStarted=0;lab.pump();}")
+        page.evaluate("lab.replay(); for(let i=0;i<24;i++){lab.state.sceneStarted=-Infinity;lab.pump();}")
         assert page.evaluate('lab.state.current.component') == 'results', 'Replay failed to return to results'
         # Completion preserves educational topics instead of erasing them.
         page.evaluate("lab.state.completed=false;lab.state.seenScenes.clear();lab.state.sceneArchive.clear();lab.state.queue=[];")
         for dataset in ('MNIST', 'CIFAR10'):
             for component in ('data', 'quantize', 'forward', 'backward', 'update', 'evaluate'):
                 page.evaluate('e=>lab.receive(e)', {'type': 'activity', 'component': component, 'dataset': dataset, 'bits': 4})
-        page.evaluate("lab.receive({type:'status',status:'completed'});for(let i=0;i<20;i++){lab.state.sceneStarted=0;lab.pump();}")
-        assert page.evaluate('lab.state.seenScenes.size') >= 13, 'Completion skipped educational topics'
+        page.evaluate("lab.receive({type:'status',status:'completed'});for(let i=0;i<20;i++){lab.state.sceneStarted=-Infinity;lab.pump();}")
+        assert page.evaluate('lab.state.seenScenes.size') >= 13, page.evaluate('({seen:[...lab.state.seenScenes],current:lab.state.current,paused:lab.state.paused,focused:lab.state.networkFocused,queued:lab.state.queue.map(x=>x.component)})')
         assert not errors, errors
         print('Browser checks passed: real neurons/maps, dataset transition, pause, results, scrolling, reduced motion, no JavaScript errors.')
         browser.close()
