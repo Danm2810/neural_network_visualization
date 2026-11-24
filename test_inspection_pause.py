@@ -19,14 +19,21 @@ def main():
         assert page.evaluate("!lab.state.paused && lab.state.networkFocused")
         assert page.evaluate("lab.state.current.component") == "forward"
         page.click("#pause")
-        frozen = page.evaluate("lab.network.clock")
+        visual_state = "({clock:lab.network.clock,reading:lab.network.readingElapsed,construction:lab.network.construction,camera:{...lab.network.camera},values:lab.network.nodes.map(n=>n.value)})"
+        frozen = page.evaluate(visual_state)
         page.wait_for_timeout(250)
-        assert page.evaluate("lab.network.clock") == frozen
+        assert page.evaluate(visual_state) == frozen, 'Visual state continued after pause'
+        # Incoming measurements and a forced repaint must not alter paused values.
+        page.evaluate("lab.network.setSnapshot({dataset:'MNIST',bits:4,layers:[{name:'conv1',activations:Array(32).fill(9)}]});lab.network._draw()")
+        assert page.evaluate(visual_state) == frozen, 'Paused repaint consumed new measurements'
         assert page.evaluate("window.stopCalls") == 0
         assert page.locator("#stop").is_enabled()
         # Closing details, Go live, replay and a new run cannot override pause.
         page.click("#reset-view")
         assert page.evaluate("lab.state.paused && !lab.network.selected")
+        reset_camera = page.evaluate('({...lab.network.camera})')
+        page.wait_for_timeout(150)
+        assert page.evaluate('({...lab.network.camera})') == reset_camera, 'Reset view kept easing while paused'
         assert page.evaluate("performance.now()-lab.state.sceneStarted") < 1000
         page.click("#go-live")
         assert page.evaluate("lab.state.paused && lab.network.paused && lab.state.queue.length===0")

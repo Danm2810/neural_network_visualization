@@ -11,7 +11,7 @@ Install Python (tested with Python 3.13), Git, and Microsoft Edge WebView2 Runti
 python launch_visualizer.py
 ```
 
-Choose Quick / real data for a short complete walkthrough, Full experiment for the original workload, or Illustrative demo for synthetic teaching examples. The first real run downloads MNIST and CIFAR-10. Each slide provides 20 seconds of reading time on Slow, 12 on Normal, or 8 on Fast; pause and replay affect only the presentation.
+Choose Quick / real data for a short complete walkthrough, Full experiment for the original workload, or Illustrative demo for synthetic teaching examples. The first real run downloads MNIST and CIFAR-10. Each layer explanation provides 8–11 seconds of reading time before the next construction step. Pause freezes all visual animation and construction while Python training continues; replay affects only the presentation.
 
 See [the full guide](WEB_VISUALIZER_README.md) for controls, sampling limits, outputs, and implementation details.
 

@@ -6,10 +6,12 @@ On a fresh machine, run `./setup_visualizer.ps1`. Python and Microsoft Edge WebV
 
 ## Presentation controls
 
-Each explanation stays readable for at least 20 seconds on Slow, 12 seconds on Normal, or 8 seconds on Fast, including in reduced-motion mode. Text changes with a subtle 240 ms crossfade while the network stays visible in a fixed position. There are no full-screen chapter covers. A step stays longer when no next training event is available. Training can run ahead without shortening this reading time.
+The network occupies the main workspace. Explanations, run controls, and playback controls share a compact panel: a sidebar on wider windows and a top panel on narrower windows. On compact windows, longer explanations scroll within that panel to preserve network space. Live training metrics remain separate from the paced explanation. Short camera shots show a concise heading and sentence tied to the actual camera focus; the overview provides more context. Larger, high-contrast type replaces the former oversized headings and small control labels.
+
+Each layer and camera explanation receives at least 8 seconds of reading time, extended by up to 3 seconds according to the displayed text length. The next layer or phase waits for that interval to finish. Fast mode and reduced motion do not shorten it. Text changes with a subtle crossfade while the network stays visible. There are no full-screen chapter covers. Training can run ahead without shortening the visual story.
 
 * **Start learning:** choose Quick / real data, Full experiment, or Illustrative demo.
-* **Pause visuals:** freeze the presentation to discuss a scene. Training and live measurements continue. Resume continues the bounded visual story. Pause/Resume is a global visual playback choice changed only by that button or Space. Inspection holds the reading timer separately. Closing details, Go live, replay, and starting or stopping Python never override the playback choice.
+* **Pause visuals:** freeze layer construction, camera movement, signals, fades, and reading timers. Python training continues in the background; sampled values and metric changes wait until resume. Resume continues from the held point rather than skipping elapsed reading time. Pause/Resume is a global visual playback choice changed only by that button or Space. Closing details, Go live, replay, and starting or stopping Python never override the playback choice.
 * **Go live:** clear queued/replayed visuals, close neuron details, and jump directly to the latest observed activity or completed results. Training itself is unaffected, and an existing visual pause stays paused.
 * **Replay recent:** revisit recent observed scenes without retraining. Return live ends the replay.
 * **Motion:** enable reduced motion. System reduced-motion preferences are also respected.
@@ -53,4 +55,4 @@ Browser checks in `test_web_presentation.py --live` exercise the actual Quick wo
 
 ### Presentation speed
 
-Click the current Speed button to open the rounded slider above it to choose **Slow**, **Normal** (the default), or **Fast**. It changes network construction and signal motion, including animations already playing. Text crossfades stay brief at every speed. The three rates are 0.6×, 1×, and 1.5×. Explanations allow 20, 12, or 8 seconds of reading time respectively; training and live measurements run independently. The slider supports dragging, clicking, and the arrow keys. Pause and reduced-motion settings remain in effect at every speed.
+Click the current Speed button to choose **Slow**, **Normal**, or **Fast** for visual motion (0.6×, 1×, and 1.5×). Reading intervals remain 8–11 seconds at every speed; construction and phase changes wait for those intervals. The slider supports dragging, clicking, and arrow keys. Pause and reduced-motion settings remain in effect at every speed.

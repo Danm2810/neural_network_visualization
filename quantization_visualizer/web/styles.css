@@ -102,16 +102,16 @@ h1 em { font-family:Georgia,'Times New Roman',serif;font-weight:400;letter-spaci
 .dataset-result header { display:flex;justify-content:space-between;align-items:baseline;gap:20px;margin-bottom:20px }
 .dataset-result h2 { font-size:35px;font-weight:400;letter-spacing:-1.4px;margin:0 }
 .dataset-result header p { font-size:11px;margin:0;color:#607465 }
-.score-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:12px }
+.score-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px }
 .score-card { border-radius:9px;padding:22px 18px;background:#dfe5dc;min-height:220px;position:relative;overflow:hidden }
 .score-card.best { background:#c5f17d }
 .dataset-result.cifar .score-card { background:#f2d9c1 }
 .dataset-result.cifar .score-card.best { background:#ffa578 }
 .score-card .precision { font-size:12px;text-transform:uppercase;letter-spacing:1px }
-.score-card .score { font-size:49px;font-weight:400;letter-spacing:-2.5px;margin-top:30px;line-height:1 }
+.score-card .score { font-size:49px;font-weight:400;letter-spacing:-2.5px;margin-top:50px;line-height:1 }
 .score-card .score small { font-size:15px;letter-spacing:0 }
 .score-card p { font-size:11px;line-height:1.5;max-width:180px;color:#4f624d;margin:12px 0 0 }
-.score-card .best-tag { position:absolute;right:13px;top:18px;font-size:7px;letter-spacing:1px;border:1px solid #42602d5c;border-radius:20px;padding:4px 7px }
+.score-card .best-tag { position:absolute;left:18px;top:48px;font-size:9px;letter-spacing:1px;border:1px solid #42602d5c;border-radius:20px;padding:4px 7px }
 .score-bar { height:4px;background:#20342b20;margin-top:18px;border-radius:3px;overflow:hidden }
 .score-bar span { display:block;height:100%;background:#2c4936;width:0 }
 .dataset-summary { font-size:13px;line-height:1.6;margin:18px 0 0;max-width:760px }
@@ -141,7 +141,7 @@ h1 { font-size:53px }
 .eval-ring small { font-size:6px }
 .score-card { padding:18px 12px }
 .score-card .score { font-size:39px }
-.score-card .best-tag { right:8px;font-size:6px }
+.score-card .best-tag { left:12px;right:auto;font-size:10px;max-width:calc(100% - 24px);white-space:normal }
 .dataset-label small { display:none }
 }
 @media(max-height:780px) {
@@ -191,6 +191,7 @@ body.reduced-motion * { scroll-behavior:auto!important;transition-duration:.001m
 .scene-bottom {display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:17px;font-size:8px;line-height:1.35;letter-spacing:1px;opacity:.7;z-index:6}
 body.network-focused .scene-intro {display:none}
 body.network-focused #scene {grid-template-rows:auto minmax(0,1fr) auto}
+
 body.network-focused #network-stage {border-radius:8px;background:var(--paper)}
 
 @media(max-width:1150px) {
@@ -268,3 +269,80 @@ button:focus-visible,select:focus-visible,a:focus-visible,canvas:focus-visible {
 @media(max-height:800px) { #scene {grid-template-rows:auto 156px minmax(0,1fr) auto} }
 @media(max-height:650px) { #scene {grid-template-rows:auto 128px minmax(0,1fr) auto} }
 body.network-focused #scene {grid-template-rows:auto minmax(0,1fr) auto}
+
+/* The story and its controls stay together; the network owns the main stage. */
+#app {display:grid;grid-template-rows:52px minmax(0,1fr) auto}
+.topbar {height:52px;padding:6px 20px}
+.brand {font-size:11px}.brand-mark {font-size:38px}
+.run-state {font-size:15px;max-width:420px}.run-state #status {max-height:none}
+#workspace {display:grid;grid-template-columns:340px minmax(0,1fr);min-height:0}
+#story-panel {display:flex;flex-direction:column;gap:18px;min-height:0;overflow:auto;padding:22px;background:#e9eee7;border-right:1px solid #b8c7bf;color:#233a37}
+#story-panel .chapter {font-size:13px;letter-spacing:.5px;line-height:1.35}
+#story-panel .chapter #chapter-number {flex:none;font-size:15px}
+#story-panel .run-controls {display:grid;grid-template-columns:1fr 42px;gap:8px}
+#story-panel .run-controls select {grid-column:1/-1;min-width:0;width:100%;font-size:16px;padding:9px;background:#f7f8f2;color:#233a37}
+#story-panel .run-controls .button {font-size:16px;padding:10px}
+#story-panel .run-controls .button span {margin-left:8px}
+#story-panel .scene-intro,body.network-focused #story-panel .scene-intro {display:block;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding-right:6px}
+#story-panel .scene-copy {display:flex;flex-direction:column;align-items:stretch;gap:12px}
+#story-panel #eyebrow,#story-panel .scene-copy-previous .scene-heading > div {font-size:13px;letter-spacing:.6px;margin-bottom:8px;color:#425e54;line-height:1.4}
+#story-panel #scene-title,#story-panel .previous-heading h1 {font-size:29px;line-height:1.15;letter-spacing:-.6px}
+#story-panel #scene-title em,#story-panel .previous-heading h1 em {font:inherit;letter-spacing:inherit}
+#story-panel #scene-description,#story-panel .scene-copy-previous .scene-explanation > p {font-size:22px;line-height:1.4;color:#233a37;margin:0}
+#story-panel #scene-detail,#story-panel .scene-copy-previous .scene-explanation > div {font-size:16px;line-height:1.45;color:#405a50;opacity:1;margin-top:12px}
+#story-panel .presentation-controls {display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:stretch}
+#story-panel .presentation-controls button {font-size:14px;padding:10px 8px;white-space:normal;width:100%;min-height:40px;color:#edf5ef;background:#29453e}
+#story-panel .speed-picker {margin:0;min-width:0}
+#story-panel .speed-control {width:260px;left:0;bottom:calc(100% + 8px)}
+.speed-heading label {font-size:11px}.speed-labels {font-size:12px}#speed-value {font-size:14px}
+#story-panel #mode-banner {font-size:13px;line-height:1.4;padding:0;background:transparent;color:#405a50;letter-spacing:0;border:0}
+#scene,body.network-focused #scene {display:grid;grid-template-rows:32px minmax(0,1fr) 30px;padding:12px 16px 6px;gap:8px;height:100%;min-height:0}
+.scene-top {justify-content:flex-end}
+.dataset-label #dataset-name {font-size:17px}.dataset-label small {font-size:12px;color:#405a50;opacity:1}
+#network-stage,body.network-focused #network-stage {border:0;border-radius:0}
+#network-toolbar {min-height:36px;padding:3px 0;gap:8px}
+.network-label {font-size:12px;letter-spacing:.5px;color:#405a50}
+#reset-view {font-size:13px;padding:7px 10px;white-space:nowrap}
+.network-hint {font-size:11px;letter-spacing:.4px;min-height:19px}
+.scene-bottom {font-size:12px;opacity:1;letter-spacing:0;color:#405a50;gap:8px}
+.scene-bottom .route-note {display:none}
+.dashboard {height:auto;min-height:0;display:grid;grid-template-columns:1fr;padding:10px 20px 8px;gap:6px}
+.metrics {padding:0;gap:16px}.metrics>div {gap:2px}.metrics span {font-size:12px;color:#d2e2d7;letter-spacing:.5px}.metrics b {font-size:22px}
+.metric-note {font-size:12px;color:#d2e2d7;line-height:1.3;gap:10px}
+.progress-track {margin:0}.metric-note #bridge-note {white-space:normal}
+#message-count {font-size:12px;color:#d2e2d7}
+#message-panel {top:64px;bottom:100px}
+#message-panel p,#source-tables {font-size:15px}#log {font-size:14px}
+#toast {font-size:16px;bottom:110px}
+/* Freeze newly-created CSS motion as well as animations already playing. */
+body.visuals-paused *,body.visuals-paused *::before,body.visuals-paused *::after {animation-play-state:paused!important;scroll-behavior:auto!important}
+@media(max-width:1050px) {
+  #workspace {grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  #story-panel {display:grid;grid-template-columns:180px minmax(0,1fr) 260px;grid-template-rows:108px 36px;gap:8px 16px;padding:12px 16px;height:176px;max-height:176px;border-right:0;border-bottom:1px solid #b8c7bf}
+  #story-panel .run-controls {grid-column:1;grid-row:1}
+  #story-panel .chapter {grid-column:1;grid-row:2;font-size:12px;align-self:start}
+  #story-panel .scene-intro,body.network-focused #story-panel .scene-intro {grid-column:2;grid-row:1/3;min-height:0;overflow:auto;padding-right:6px}
+  #story-panel .presentation-controls {grid-column:3;grid-row:1;gap:6px}
+  #story-panel .presentation-controls button {min-height:32px;padding:6px}
+  #story-panel #mode-banner {grid-column:3;grid-row:2;font-size:12px}
+  #story-panel #eyebrow {display:none}
+  #story-panel #scene-title,#story-panel .previous-heading h1 {font-size:25px}
+  #story-panel .scene-copy {gap:8px}
+  #story-panel #scene-description,#story-panel .scene-copy-previous .scene-explanation > p {font-size:22px;line-height:1.3}
+  #story-panel #scene-detail,#story-panel .scene-copy-previous .scene-explanation > div {font-size:16px;line-height:1.35;margin-top:8px}
+  #story-panel .speed-control {bottom:auto;top:calc(100% + 8px);left:auto;right:0}
+  #scene,body.network-focused #scene {grid-template-rows:minmax(0,1fr) 22px;padding:4px 12px;gap:3px}
+  .scene-top,.network-hint {display:none}
+  .dashboard {padding:7px 16px;gap:4px}
+  .metric-note #metric-note {max-width:75%}
+}
+@media(max-width:760px) {
+  #story-panel {grid-template-columns:minmax(0,1fr) minmax(0,1fr);max-height:280px}
+  #story-panel .scene-intro,body.network-focused #story-panel .scene-intro {grid-column:1;grid-row:1/3}
+  #story-panel .run-controls {grid-column:2;grid-row:1}
+  #story-panel .presentation-controls {grid-column:2;grid-row:2}
+  #story-panel .chapter,#story-panel #mode-banner {display:none}
+  #story-panel #scene-description {font-size:20px}
+  .metrics {flex-wrap:wrap;gap:6px 20px}.metrics>div {min-width:70px}
+  .run-state {font-size:13px;max-width:50%}
+}

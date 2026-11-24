@@ -3,7 +3,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   // Reading time begins after the entrance animation, independent of training speed.
-  const BASE_SLIDE_READING_MS = 12000;
+  const BASE_READING_SECONDS = 8;
   const MOTION_SPEEDS = [{label:'Slow',rate:.6},{label:'Normal',rate:1},{label:'Fast',rate:1.5}];
   const sceneDefs = {
     welcome: {number:'00',chapter:'MEET THE MACHINE',eyebrow:'A LEARNING MACHINE, REVEALED',title:['Small weights.','Big ideas.'],description:'Watch a neural network learn, then see what happens when its weights have fewer numbers to choose from.',detail:'Reveal the network one layer at a time. This is a guided view of its fixed architecture; training changes weights, not its size.'},
@@ -16,17 +16,30 @@
     results:{number:'07',chapter:'SEE THE BIG PICTURE',eyebrow:'EIGHT MODELS. ONE QUESTION.',title:['What did','we learn?'],description:'Compare how well each model recognized new images. Does using fewer weight levels still give good answers?',detail:'The simplest answer comes from comparing the test scores side by side.'}
   };
   const state={speedIndex:1,motionRate:1,seq:0,running:false,mode:'quick',paused:false,replaying:false,queue:[],replayQueue:[],history:[],snapshots:new Map(),results:new Map(),artifacts:[],logs:[],tables:[],seenDatasets:new Set(),current:null,sceneStarted:0,transitioning:false,transitionTl:null,revealTl:null,pauseAt:0,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,terminal:null,completed:false,networkFocused:false};
-  let network=null, polling=false, lenis=null, toastTimer=null;
+  let network=null, polling=false, lenis=null;
   state.sceneArchive=new Map();state.seenScenes=new Set();state.replayReturn=null;
   const normalizeDataset = value => String(value||'MNIST').toUpperCase().replace(/[^A-Z0-9]/g,'')==='CIFAR10'?'CIFAR10':'MNIST';
   const keyFor=e=>`${normalizeDataset(e.dataset)}:${e.bits??32}`;
   const api=()=>window.pywebview?.api;
   const finite = v => typeof v==='number' && Number.isFinite(v);
 
-  function toast(message){$('toast').textContent=message;clearTimeout(toastTimer);if(window.gsap){gsap.to('#toast',{opacity:1,y:0,duration:.25});toastTimer=setTimeout(()=>gsap.to('#toast',{opacity:0,y:20,duration:.35}),4000);}else{$('toast').style.opacity='1';toastTimer=setTimeout(()=>$('toast').style.opacity='0',4000);}}
-  function log(message){state.logs.push(String(message));if(state.logs.length>350)state.logs.splice(0,state.logs.length-350);$('log').textContent=state.logs.join('\n');$('message-count').textContent=String(state.logs.length);if(!$('message-panel').hidden)$('log').scrollTop=$('log').scrollHeight;}
+  const shownNotices=new Set();
+  let noticeTimer=null;
+  function hideNotice(){clearTimeout(noticeTimer);noticeTimer=null;$('toast').style.opacity='0';}
+  function toast(message){
+    const text=String(message).trim();
+    if(!text||shownNotices.has(text))return;
+    shownNotices.add(text);hideNotice();
+    $('toast').textContent=text;
+    $('toast').style.transform='translate(-50%,0)';
+    $('toast').style.opacity='1';
+    // Notices expire in wall time even when visual playback is paused.
+    noticeTimer=setTimeout(hideNotice,5000);
+  }
+  function renderLog(){ $('log').textContent=state.logs.join('\n');$('message-count').textContent=String(state.logs.length);if(!$('message-panel').hidden)$('log').scrollTop=$('log').scrollHeight; }
+  function log(message){state.logs.push(String(message));if(state.logs.length>350)state.logs.splice(0,state.logs.length-350);if(!state.paused)renderLog();}
   function titleLines(lines){const h=$('scene-title');h.replaceChildren(document.createTextNode(lines[0]),document.createElement('br'));const em=document.createElement('em');em.textContent=lines[1];h.append(em);}
-  function setModeNote(){const notes={quick:'QUICK RUN · Real training, smaller dataset. These scores are a demonstration, not a benchmark.',full:'FULL EXPERIMENT · Original datasets and epoch counts. Live metrics continue while the visual story is paused.',demo:'ILLUSTRATIVE DEMO · Generated events and example scores only. No network is being trained.'};$('mode-banner').textContent=notes[state.mode];}
+  function setModeNote(){const notes={quick:'QUICK · Real training; demonstration scores.',full:'FULL · Real training; metrics stay live.',demo:'DEMO · Synthetic examples; no training.'};$('mode-banner').textContent=notes[state.mode];}
   function setNetworkFocus(focused){state.networkFocused=focused;document.body.classList.toggle('network-focused',focused);$('reset-view').textContent=focused?'Back to overview ↙':'Reset view ↙';}
   function inspectNetwork(selection){
     if(selection){
@@ -50,7 +63,50 @@
       }
     }
   }
-  function ensureNetwork(){if(!network && window.NetworkView){network=new NetworkView($('network-canvas'),{onSelect:inspectNetwork});network.setReducedMotion?.(state.reduced);network.setSpeed?.(state.motionRate);network.setPaused(state.paused);}return network;}
+  function shotCopy(shot){
+    const scene=state.current || {component:shot.stage,dataset:'MNIST',bits:32};
+    const overview=sceneDefs[shot.stage] || sceneDefs.welcome;
+    const titles=['Read the image','Detect edges','Find shapes','Combine features','Score the classes'];
+    const forward=['Pixels become the network’s input.','Filters detect local edges and contrasts.','Channels combine edges into more complex patterns.','Hidden neurons combine features into evidence.','Ten outputs score the possible classes.'];
+    let title=titles[shot.layer],description=forward[shot.layer],detail='';
+    if(shot.layer===null){
+      title=overview.chapter.toLowerCase();title=title[0].toUpperCase()+title.slice(1);
+      description=overview.description;detail=overview.detail;
+      if(shot.stage==='data')description=scene.dataset==='CIFAR10'?'Color photographs become pixel values for the network.':'Handwritten digits become pixel values for the network.';
+      if(shot.stage==='quantize'&&scene.bits===32){description='This baseline keeps its original full-precision convolution weights.';detail='Compare other bit widths with this baseline to see the effect of fewer weight settings.';}
+    }else{
+      if(shot.building){title=`Reveal ${['the input','edge detectors','shape detectors','hidden neurons','class outputs'][shot.layer]}`;}
+      else if(shot.stage==='backward'){title=`Gradients · ${['input','edges','shapes','hidden neurons','outputs'][shot.layer]}`;description='Gradients indicate how these weights should change.';}
+      else if(shot.stage==='update'){title='Adjust the weights';description='Adam adjusts this layer using its gradients.';}
+      else if(shot.stage==='quantize'){title=scene.bits===32?'Keep full precision':'Choose weight levels';description=scene.bits===32?'This baseline retains the original weight values.':'Convolution weights use a smaller set of values.';}
+      else if(shot.stage==='evaluate'){title=shot.layer===0?'Try an unseen image':'Check the prediction';description=shot.layer===0?'Held-out images test what the network learned.':'Class scores select an answer without changing weights.';}
+    }
+    return {title,description,detail};
+  }
+  function getReadingSeconds(shot){
+    const copy=shotCopy(shot);
+    const words=[copy.title,copy.description,copy.detail].join(' ').trim().split(/\s+/).length;
+    // Eight seconds is the floor, including Fast mode. Longer descriptions get
+    // at most three extra seconds; shorter ones return toward the base interval.
+    return BASE_READING_SECONDS+Math.min(3,Math.max(0,Math.ceil((words-18)/12)));
+  }
+  function cameraShot(shot){
+    state.cameraShot=shot;
+    const scene=state.current;
+    if(!scene||scene.component!==shot.stage)return;
+    const {title,description,detail}=shotCopy(shot);
+    state.readingSeconds=getReadingSeconds(shot);
+    state.sceneStarted=performance.now();
+    $('scene-detail').textContent=detail;$('scene-detail').hidden=!detail;
+    $('scene-title').textContent=title;
+    $('scene-description').textContent=description;
+    document.querySelector('.scene-intro').scrollTop=0;
+    $('eyebrow').textContent=shot.layer===null?'THE CURRENT TRAINING STEP':shot.building?'BUILDING THE VIEW':'IN FOCUS NOW';
+    if(window.gsap&&!state.reduced&&!state.transitioning&&!state.paused){
+      state.shotFade?.kill();state.shotFade=gsap.fromTo('.scene-copy',{opacity:.7},{opacity:1,duration:.16,ease:'sine.out'});
+    }
+  }
+  function ensureNetwork(){if(!network && window.NetworkView){network=new NetworkView($('network-canvas'),{onSelect:inspectNetwork,onCameraShot:cameraShot,getReadingSeconds});network.setReducedMotion?.(state.reduced);network.setSpeed?.(state.motionRate);network.setPaused(state.paused);}return network;}
   function setSpeed(index){
     index=Math.max(0,Math.min(2,Math.round(Number(index)||0)));
     const speed=MOTION_SPEEDS[index];state.speedIndex=index;state.motionRate=speed.rate;
@@ -61,6 +117,7 @@
     // timeScale preserves progress and paused state; do not restart an in-flight scene.
     state.revealTl?.timeScale(speed.rate);
     network?.setSpeed?.(speed.rate);
+    if(state.paused)freezeCssAnimations();
   }
   function enqueue(component,event={}){
     if(!sceneDefs[component])return;
@@ -97,11 +154,15 @@
     $('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':state.mode==='demo'?'ILLUSTRATIVE EVENTS / NOT REAL TRAINING':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';
     const nv=ensureNetwork();nv?.setTheme(scene.dataset,scene.component);nv?.setActivity({...scene.event,bits:scene.bits,component:scene.component});
     const snapshot=scene.snapshot||state.snapshots.get(keyFor(scene));if(snapshot)nv?.setSnapshot(snapshot);
+    cameraShot({stage:scene.component,layer:null,building:false});
+    if(nv){nv.shotKey=null;nv._directCamera();}
     setNetworkFocus(false);
     if(scene.component==='results')renderResults();
     if(!state.replaying){state.seenDatasets.add(scene.dataset);state.seenScenes.add(`${scene.dataset}:${scene.component}`);state.history.push({...scene});if(state.history.length>16)state.history.shift();$('replay').disabled=state.history.length<2;}
   }
   function clearTransition() {
+    state.shotFade?.kill();
+    state.shotFade=null;
     state.transitionTl?.kill();
     state.transitionTl=null;
     state.transitionScene=null;
@@ -127,6 +188,7 @@
     }
     applyScene(scene);
     if(!canFade){if(scene.component==='results')revealResults();return;}
+    state.shotFade?.kill();
     state.transitioning=true;state.transitionScene=scene;
     gsap.set(previous,{opacity:0});
     state.transitionTl=gsap.timeline({paused:state.paused,onComplete:()=>{
@@ -140,7 +202,8 @@
   }
   function pump(){
     if(state.paused||state.networkFocused||state.transitioning)return;
-    const delay=BASE_SLIDE_READING_MS/state.motionRate; // Slow: 20s, Normal: 12s, Fast: 8s after entrance.
+    if(network?.isReadingComplete && !network.isReadingComplete())return;
+    const delay=(state.readingSeconds || BASE_READING_SECONDS)*1000;
     if(state.current&&performance.now()-state.sceneStarted<delay)return;
     let next;
     if(state.replaying){next=state.replayQueue.shift();if(!next){state.replaying=false;$('replay').textContent='↶ Replay recent';$('playback-label').textContent='RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';toast('Back to the live presentation.');}}
@@ -149,6 +212,7 @@
     if(next)transition(next);
   }
   function updateMetrics(event){
+    if(state.paused){state.pendingMetrics={...(state.pendingMetrics||{}),...event};return;}
     if(event.dataset)$('metric-dataset').textContent=normalizeDataset(event.dataset)==='CIFAR10'?'CIFAR-10':'MNIST';
     if(event.bits!=null)$('metric-bits').textContent=String(event.bits);
     if(event.epoch!=null)$('metric-epoch').textContent=String(event.epoch);
@@ -199,6 +263,7 @@
     finally{polling=false;}
   }
   function reset(){
+    state.pendingMetrics=null;hideNotice();
     if(!state.paused){document.body.classList.remove('visuals-paused');state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];}
     state.latestScene=null;state.sceneArchive.clear();state.seenScenes.clear();state.replayReturn=null;network?.destroy();network=null;ensureNetwork();
     state.queue=[];state.replayQueue=[];state.history=[];state.snapshots.clear();state.results.clear();state.seenDatasets.clear();state.artifacts=[];state.logs=[];state.tables=[];$('table-list').replaceChildren();$('table-count').textContent='0';state.networkFocused=false;state.replaying=false;state.terminal=null;state.completed=false;clearTransition();state.revealTl?.kill();state.current=null;
@@ -216,16 +281,43 @@
     $('pause').setAttribute('aria-pressed',String(state.paused));
     $('pause').textContent=state.paused?'▶ Resume visuals':'Ⅱ Pause visuals';
   }
-  // Only togglePause (the playback button or its Space shortcut) changes this state.
+  function freezeCssAnimations(){
+    const held=state.cssPausedAnimations ||= [];
+    for(const animation of document.getAnimations()){
+      if(animation.playState==='running'){
+        if(!held.includes(animation))held.push(animation);
+        const heldTime=animation.currentTime;
+        animation.pause();
+        // Resolve the pending browser pause at this frame, not the next paint.
+        if(heldTime!==null)animation.currentTime=heldTime;
+      }
+    }
+  }
+  // Public playback setter also supports deterministic verification.
   function setPaused(paused,resetReading=false){
-    $('pause').disabled=false;
-    if(state.paused===paused){network?.setPaused(paused);if(paused){state.transitionTl?.pause();state.revealTl?.pause();}return;}
+    paused=Boolean(paused);
+    const changed=state.paused!==paused;
+    if(paused)freezeCssAnimations(); // Capture transitions before changing CSS.
     state.paused=paused;syncPauseButton();
-    document.body.classList.toggle('visuals-paused',state.paused);
-    if(state.paused){state.cssPausedAnimations=document.getAnimations().filter(a=>a.playState==='running');state.cssPausedAnimations.forEach(a=>a.pause());}
-    else{state.cssPausedAnimations?.forEach(a=>a.play());state.cssPausedAnimations=[];}
-    network?.setPaused(state.paused);if(state.paused){state.pauseAt=performance.now();state.transitionTl?.pause();state.revealTl?.pause();$('playback-label').textContent='VISUALS PAUSED / TRAINING CONTINUES';}
-    else{state.sceneStarted=resetReading?performance.now():state.sceneStarted+performance.now()-state.pauseAt;state.transitionTl?.resume();state.revealTl?.resume();$('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';}
+    window.gsap?.globalTimeline.paused(paused);
+    document.body.classList.toggle('visuals-paused',paused);
+    network?.setPaused(paused);
+    if(paused){
+      lenis?.stop();
+      if(changed)state.pauseAt=performance.now();
+      state.transitionTl?.pause();state.revealTl?.pause();state.shotFade?.pause();
+      $('playback-label').textContent='VISUALS PAUSED / TRAINING CONTINUES';
+      return;
+    }
+    if(!state.reduced)lenis?.start();
+    state.cssPausedAnimations?.forEach(a=>{if(a.playState==='paused')a.play();});state.cssPausedAnimations=[];
+    if(changed){
+      state.sceneStarted=resetReading?performance.now():state.sceneStarted+performance.now()-state.pauseAt;
+      state.transitionTl?.resume();state.revealTl?.resume();state.shotFade?.resume();
+      renderLog();
+    }
+    if(state.pendingMetrics){const metrics=state.pendingMetrics;state.pendingMetrics=null;updateMetrics(metrics);}
+    $('playback-label').textContent=state.replaying?'REPLAY / RECENT OBSERVED ACTIVITY':'RECENT OBSERVED ACTIVITY / METRICS STAY LIVE';
   }
   function togglePause(){
     // The playback control never closes a selected neuron or implicitly toggles twice.
@@ -281,11 +373,11 @@
     state.revealTl=gsap.timeline().fromTo('#results-content',{opacity:0},{opacity:1,duration:.24,ease:'sine.inOut'});
     if(state.paused)state.revealTl.pause();
   }
-  function setReduced(value){state.reduced=value;document.body.classList.toggle('reduced-motion',value);$('motion').setAttribute('aria-pressed',String(value));$('motion').textContent=value?'◉ Reduced':'◉ Motion';network?.setReducedMotion?.(value);if(value){state.transitionTl?.progress(1);state.revealTl?.progress(1);lenis?.stop();}else lenis?.start();}
+  function setReduced(value){state.reduced=value;document.body.classList.toggle('reduced-motion',value);$('motion').setAttribute('aria-pressed',String(value));$('motion').textContent=value?'◉ Reduced':'◉ Motion';network?.setReducedMotion?.(value);if(value){state.transitionTl?.progress(1);state.revealTl?.progress(1);state.shotFade?.progress(1);lenis?.stop();}else if(!state.paused)lenis?.start();}
   function showSpeed(open,restoreFocus=false){
     $('speed-popover').hidden=!open;
     $('speed-toggle').setAttribute('aria-expanded',String(open));
-    if(open)$('animation-speed').focus();
+    if(open){$('animation-speed').focus();if(state.paused)freezeCssAnimations();}
     else if(restoreFocus)$('speed-toggle').focus();
   }
   $('speed-toggle').addEventListener('click',()=>showSpeed($('speed-popover').hidden));
@@ -308,7 +400,7 @@
   $('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('pause').addEventListener('click',togglePause);$('go-live').addEventListener('click',goLive);$('replay').addEventListener('click',replay);$('motion').addEventListener('click',()=>setReduced(!state.reduced));$('run-mode').addEventListener('change',()=>{state.mode=$('run-mode').value;setModeNote();});$('messages').addEventListener('click',()=>showMessages($('message-panel').hidden));$('close-messages').addEventListener('click',()=>showMessages(false));$('reset-view').addEventListener('click',()=>network?.resetView());$('close-inspector').addEventListener('click',()=>{$('inspector').hidden=true;network?.resetView();});$('back-network').addEventListener('click',()=>{const recent=[...state.history].reverse().find(x=>x.component!=='results');if(recent)transition(recent,true);});document.querySelector('.brand').addEventListener('click',e=>{e.preventDefault();network?.resetView();});document.addEventListener('keydown',e=>{if(e.key==='Escape'){showMessages(false);network?.resetView();}if(e.code==='Space'&&!['INPUT','SELECT','BUTTON','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();togglePause();}});
   window.addEventListener('pywebviewready',()=>{$('bridge-note').textContent='DESKTOP CONNECTED';poll();});
   ensureNetwork();setReduced(state.reduced);applyScene({component:'welcome',dataset:'MNIST',bits:32,event:{}});
-  if(window.Lenis){try{lenis=new Lenis({wrapper:$('results'),content:$('results-content'),smoothWheel:true,lerp:.09,autoRaf:true});if(state.reduced)lenis.stop();}catch(e){log('Smooth scrolling unavailable: '+e.message);}}
+  if(window.Lenis){try{lenis=new Lenis({wrapper:$('results'),content:$('results-content'),smoothWheel:true,lerp:.09,autoRaf:true});if(state.reduced||state.paused)lenis.stop();}catch(e){log('Smooth scrolling unavailable: '+e.message);}}
   setInterval(poll,200);setInterval(pump,100);
-  window.lab={state,receive,pump,transition,applyScene,start,stop,togglePause,goLive,replay,renderResults,setReduced,setSpeed,get network(){return network;}};
+  window.lab={state,receive,pump,transition,applyScene,start,stop,togglePause,goLive,replay,renderResults,setReduced,setSpeed,setPaused,getReadingSeconds,get network(){return network;}};
 })();

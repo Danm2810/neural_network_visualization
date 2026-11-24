@@ -49,6 +49,10 @@
       this.constructionFrom = 0;
       this.constructionElapsed = 0;
       this.constructionDuration = 0;
+      this.readingElapsed = 0;
+      this.readingDuration = 0;
+      this.readingIndex = 0;
+      this.readingShots = [];
       this.lastFrame = 0;
       this.selected = null;
       this.inspectorScroll = 0;
@@ -144,6 +148,7 @@
           if (Math.abs(dx) + Math.abs(dy) > 5) { this.drag.moved = true; this.cameraManual = true; }
           this.target.x = this.drag.x + dx;
           this.target.y = this.drag.y + dy;
+          if(this.paused) this.camera={...this.target};
           this.dirty = true;
         } else {
           this.hover = this._hit(p);
@@ -190,8 +195,9 @@
       this.canvas.width = Math.round(this.width * this.dpr);
       this.canvas.height = Math.round(this.height * this.dpr);
       this.baseScale = Math.min(this.width / 1120, this.height / 500);
+      // Layer spacing uses available width; nodes retain uniform circular size.
       this.scaleX = this.width / 1120;
-      this.scaleY = this.height / 500;
+      this.scaleY = this.baseScale;
       this.dirty = true;
       // ResizeObserver runs after animation frames. Repaint now so CSS layout
       // transitions don't clear the canvas immediately before every screen paint.
@@ -209,6 +215,7 @@
       this.target.x = p.x - this.width / 2 - (p.x - this.width / 2 - this.target.x) * ratio;
       this.target.y = p.y - this.height / 2 - (p.y - this.height / 2 - this.target.y) * ratio;
       this.target.zoom = next;
+      if(this.paused) this.camera={...this.target};
       this.dirty = true;
     }
     _hit(p) {
@@ -223,7 +230,7 @@
       return winner;
     }
     _inInspector(p) { return p.x > this.width - this._inspectorWidth() - 14 && p.y > 14 && p.y < this.height - 14; }
-    _inspectorWidth() { return clamp(this.width * .32, 270, 360); }
+    _inspectorWidth() { return clamp(this.width * .4, 320, 420); }
 
     _select(node) {
       this.cameraManual = true;
@@ -243,6 +250,7 @@
         this.target = {zoom: 1, x: 0, y: 0};
         this.options.onSelect?.(null);
       }
+      if(this.paused) this.camera={...this.target};
       this.dirty = true;
     }
 
@@ -267,6 +275,8 @@
     }
 
     setActivity(event = {}) {
+      if (this.paused) { this.pendingActivity = event; return; }
+      const previousBits = this.bits;
       this.bits = event.bits ?? this.bits;
       if (event.type === 'status') {
         this.active = ['running', 'starting'].includes(event.status);
@@ -276,6 +286,7 @@
         this.component = event.component || (event.phase === 'evaluate' ? 'evaluate' : this.component);
         this.activityAt = this.clock;
       }
+      if (previousBits !== this.bits && this.readingElapsed > 0) this._startReading();
       this.dirty = true;
     }
     setTheme(dataset = 'MNIST', stage = 'forward') {
@@ -297,10 +308,11 @@
         this.stageClock = this.clock;
         this.shotKey = null;
         if (!this.selected && !this.drag) this.cameraManual = false;
-        if (stage === 'quantize') this.setConstructionProgress(Math.max(this.constructionTarget, 2), {duration: 6});
-        if (stage === 'forward') this.setConstructionProgress(4, {duration: this.construction < 2 ? 8 : 6});
+        if (stage === 'quantize') this.setConstructionProgress(Math.max(this.constructionTarget, 2));
+        if (stage === 'forward') this.setConstructionProgress(4);
         // A user can jump straight to these chapters or replay only recent work.
         if (['backward', 'update', 'evaluate', 'results'].includes(stage)) this.setConstructionProgress(4, {immediate: true});
+        this._startReading();
       }
       this.dirty = true;
     }
@@ -314,7 +326,7 @@
       this.constructionTarget = next;
       this.constructionElapsed = 0;
       this.constructionDuration = Math.max(.45, Number(options.duration) || Math.abs(next - this.construction) * 2.4);
-      if (options.immediate || this.reduced) this.construction = next;
+      if (options.immediate) this.construction = next;
       if (this.selected && this._nodeVisibility(this.selected) < .65) this._select(null);
       this.dirty = true;
     }
@@ -333,19 +345,22 @@
       if (!this.paused && this.pendingSnapshot) {
         const pending = this.pendingSnapshot; this.pendingSnapshot = null; this.setSnapshot(pending);
       }
+      if (!this.paused && this.pendingActivity) {
+        const pending = this.pendingActivity; this.pendingActivity = null; this.setActivity(pending);
+      }
       this.dirty = true;
     }
     setSpeed(value) { this.motionRate = clamp(Number(value) || 1, .25, 3); }
     setReducedMotion(value) {
       this.reduced = Boolean(value);
       if (this.reduced) {
-        this.construction = this.constructionTarget;
         if (!this.selected && !this.cameraManual) { this.target = {zoom: 1, x: 0, y: 0}; this.camera = {...this.target}; }
       }
       this.shotKey = null;
+      if(this.reduced) this.options.onCameraShot?.({stage:this.stage,layer:null,building:false});
       this.dirty = true;
     }
-    resetView() { this.target = {zoom: 1, x: 0, y: 0}; this._select(null); }
+    resetView() { this.target = {zoom: 1, x: 0, y: 0}; this._select(null); this.cameraFocus=null; this.options.onCameraShot?.({stage:this.stage,layer:null,building:false}); }
     destroy() {
       this.alive = false;
       cancelAnimationFrame(this.frame);
@@ -353,35 +368,56 @@
       for (const [type, fn, options] of this.listeners) this.canvas.removeEventListener(type, fn, options);
     }
 
-    // Deliberate shots follow the teaching sequence, never individual telemetry
-    // samples. Each shot holds long enough to read before easing to the next.
-    _directCamera() {
-      if (this.paused || this.reduced || this.selected || this.drag || this.cameraManual) return;
-      const elapsed = this.clock - this.stageClock;
-      let layer = null, zoom = 1;
-      if (this.construction < this.constructionTarget) {
-        layer = clamp(Math.ceil(this.construction + .01), 1, 4);
-        zoom = layer === 3 ? 1.08 : layer === 4 ? 1.2 : 1.45;
-      } else if (this.stage === 'data' || this.stage === 'welcome') {
-        layer = 0; zoom = 1.7;
-      } else if (elapsed < 8) {
-        const step = Math.min(3, Math.floor(elapsed / 2));
-        if (this.stage === 'forward') layer = [1, 2, 3, 4][step];
-        if (this.stage === 'backward') layer = [4, 3, 2, 1][step];
-        if (this.stage === 'quantize') layer = step < 2 ? 1 : 2;
-        if (this.stage === 'update') layer = [2, 3, 1, 4][step];
-        if (this.stage === 'evaluate') layer = step < 2 ? 0 : 4;
-        zoom = layer === 3 ? 1.08 : layer === 4 ? 1.2 : 1.45;
+    // Reading time uses unscaled elapsed seconds: visual speed cannot rush text.
+    _startReading() {
+      const layers = [];
+      for (let layer = Math.floor(this.construction) + 1; layer <= this.constructionTarget; layer++) layers.push({layer, building:true});
+      const routes = {welcome:[0],data:[0],quantize:[1,2],forward:[1,2,3,4],backward:[4,3,2,1],update:[2,3,1,4],evaluate:[0,4]};
+      const shots = layers.length ? layers : (routes[this.stage] || []).map(layer => ({layer,building:false}));
+      shots.push({layer:null,building:false});
+      this.readingShots = shots.map(shot => ({...shot, stage:this.stage,
+        duration:clamp(Number(this.options.getReadingSeconds?.({...shot,stage:this.stage})) || 8,8,11)}));
+      this.readingElapsed=0; this.readingIndex=0;
+      this.readingDuration=this.readingShots.reduce((sum,shot)=>sum+shot.duration,0);
+      this.shotKey=null;
+    }
+    isReadingComplete() { return this.readingElapsed >= this.readingDuration && this.construction >= this.constructionTarget; }
+    _advanceReading(dt) {
+      if(this.paused || this.selected || this.drag) return false;
+      if (this.isReadingComplete()) return false;
+      this.readingElapsed=Math.min(this.readingDuration,this.readingElapsed+Math.max(0,dt));
+      let elapsed=this.readingElapsed, index=0;
+      while(index<this.readingShots.length-1 && elapsed>=this.readingShots[index].duration) {
+        const completed=this.readingShots[index++];
+        elapsed-=completed.duration;
+        if(completed.building) this.construction=Math.max(this.construction,Math.min(this.constructionTarget,completed.layer));
       }
-      const key = `${this.stage}:${layer}:${this.width}:${this.height}`;
-      if (key === this.shotKey) return;
-      this.shotKey = key;
-      this.cameraFocus = layer;
-      this.target = layer === null ? {zoom: 1, x: 0, y: 0} : {
-        zoom, x: -(DESCRIPTORS[layer].x - 560) * this.scaleX * zoom, y: 0
-      };
-      this.hover = null;
-      this.dirty = true;
+      this.readingIndex=index;
+      const shot=this.readingShots[index];
+      if(shot?.building){
+        const from=Math.max(this.constructionFrom,shot.layer-1);
+        const progress=this.reduced ? 1 : clamp(elapsed/1.5,0,1);
+        this.construction=Math.max(this.construction,Math.min(this.constructionTarget,from+(shot.layer-from)*progress));
+      }
+      this.constructionElapsed=this.readingElapsed;
+      return true;
+    }
+    _directCamera() {
+      if(this.paused || this.selected || this.drag || this.cameraManual) return;
+      const shot=this.readingShots[this.readingIndex] || {stage:this.stage,layer:null,building:false};
+      const {layer,building}=shot;
+      const key=`${this.stage}:${this.readingIndex}:${this.width}:${this.height}`;
+      if(key===this.shotKey) return;
+      this.shotKey=key;
+      this.cameraFocus=layer;
+      this.options.onCameraShot?.({stage:this.stage,layer,building});
+      if(!this.cameraManual){
+        const zoom=layer===0?1.7:layer===3?1.08:layer===4?1.2:1.45;
+        this.target=this.reduced || layer===null ? {zoom:1,x:0,y:0} : {
+          zoom,x:-(DESCRIPTORS[layer].x-560)*this.scaleX*zoom,y:0
+        };
+      }
+      this.hover=null;this.dirty=true;
     }
 
     _frame(timestamp) {
@@ -391,18 +427,12 @@
       this.valueBlend = 1 - Math.exp(-dt * this.motionRate * 7.7);
       if (!this.paused && !this.reduced) this.clock += dt * this.motionRate;
       let moving = false;
-      if (!this.paused && this.construction !== this.constructionTarget) {
-        this.constructionElapsed += dt * this.motionRate;
-        const t = this.reduced ? 1 : clamp(this.constructionElapsed / this.constructionDuration, 0, 1);
-        this.construction = this.constructionFrom + (this.constructionTarget - this.constructionFrom) * t;
-        if (t === 1) this.construction = this.constructionTarget;
-        moving = true;
-      }
+      if (this._advanceReading(dt)) moving = true;
       this._directCamera();
       const manualCamera = this.cameraManual || this.selected || this.drag;
       for (const key of ['zoom', 'x', 'y']) {
         const delta = this.target[key] - this.camera[key];
-        if (Math.abs(delta) > .001 && (!this.paused || manualCamera)) {
+        if (Math.abs(delta) > .001 && !this.paused) {
           this.camera[key] += delta * (this.reduced ? 1 : 1 - Math.exp(-dt * (manualCamera ? 10 : 2.2) * (manualCamera ? 1 : this.motionRate)));
           moving = true;
         }
@@ -416,6 +446,7 @@
 
     _text(text, x, y, size = 12, color = this.palette.ink, align = 'left', weight = 400) {
       const c = this.ctx;
+      size += 4;
       if (this.light && !this.inspectorDrawing && ['#8eaaa9', '#b8c3ce', '#829b98'].includes(color)) color = '#526b67';
       c.font = `${weight} ${size}px "Segoe UI", Arial, sans-serif`;
       c.fillStyle = color;
@@ -425,7 +456,8 @@
     }
     _wrap(text, x, y, maxWidth, size = 11, lineHeight = 16, color = '#b8c3ce') {
       const c = this.ctx;
-      c.font = `${size}px "Segoe UI", Arial, sans-serif`;
+      lineHeight += 6;
+      c.font = `${size + 4}px "Segoe UI", Arial, sans-serif`;
       let line = '';
       for (const word of String(text).split(' ')) {
         if (c.measureText(line + word).width > maxWidth && line) {
@@ -513,7 +545,7 @@
         const value = isMeasured ? targetValue : 0;
         // Time-based blending keeps measured activation changes consistent on
         // different refresh rates; paused inspection retains its frozen values.
-        node.value += (value - node.value) * (this.reduced ? 1 : this.paused ? 0 : (this.valueBlend || 0));
+        node.value += (value - node.value) * (this.paused ? 0 : this.reduced ? 1 : (this.valueBlend || 0));
         const strength = isMeasured ? Math.tanh(Math.abs(node.value)) : 0;
         const color = node.value < 0 ? palette.negative : palette.positive;
         const focused = this.selected === node || this.hover === node;
@@ -537,18 +569,27 @@
         if (this.camera.zoom > 2 || node.name === 'fc2') this._text(String(node.index), p.x + (node.name === 'fc2' ? radius + 10 : 0), p.y,
           node.name === 'fc2' ? 10 : 8, node.name === 'fc2' ? '#b8c3ce' : '#0b1619', node.name === 'fc2' ? 'left' : 'center', 600);
       }
+      // Labels travel with the map, above/below its full topology. Never pin
+      // them to the viewport, where panned neurons could pass through them.
+      const labelTop = this._project({x:560,y:90}).y - 50;
+      const labelBottom = this._project({x:560,y:410}).y + 28;
       for (const [layerIndex, d] of DESCRIPTORS.entries()) {
         if (layerIndex > 0 && this.construction <= layerIndex - 1) continue;
-        const p = this._project({x: d.x, y: 42}), bottom = this._project({x: d.x, y: 450});
-        if (p.x < 85 || p.x > w - 85) continue;
-        // Keep labels readable when the guided camera moves closer.
-        p.y = Math.max(34, p.y); bottom.y = Math.min(h - 36, bottom.y);
-        this._text(d.title, p.x, p.y, 10, palette.ink, 'center', 700);
-        this._text(d.subtitle, p.x, p.y + 18, 10, '#8eaaa9', 'center');
-        if (d.name === 'conv1' || d.name === 'conv2') this._text(`${this.snapshot?.bits ?? '—'}-bit weights · ReLU → pool`, bottom.x, bottom.y, 9, palette.negative, 'center');
-        if (d.name === 'fc1') this._text('float32 weights · ReLU', bottom.x, bottom.y, 9, '#8eaaa9', 'center');
-        if (d.name === 'fc2') this._text('float32 · raw scores', bottom.x, bottom.y, 9, '#8eaaa9', 'center');
+        const p = this._project({x:d.x,y:250});
+        const subtitle = this.width < 1000 ? ({input:'Pixel values',conv1:'32 channels',conv2:'64 channels',fc1:'128 neurons',fc2:'10 class scores'})[d.name] : d.subtitle;
+        // At extreme zoom-out omit crowded labels instead of shrinking or
+        // shifting them into another layer. Inspection remains available.
+        c.font='700 14px "Segoe UI", Arial';
+        const spacing=Math.min(d.x-(DESCRIPTORS[layerIndex-1]?.x ?? d.x-250),(DESCRIPTORS[layerIndex+1]?.x ?? d.x+250)-d.x)*this.scaleX*this.camera.zoom;
+        if(c.measureText(d.title).width+12>spacing)continue;
+        this._text(d.title, p.x, labelTop, 10, palette.ink, 'center', 700);
+        c.font='14px "Segoe UI", Arial';
+        if(c.measureText(subtitle).width+12<=spacing)this._text(subtitle, p.x, labelTop+23, 10, '#8eaaa9', 'center');
+        const caption=d.name.startsWith('conv')?`${this.snapshot?.bits ?? this.bits}-bit · ReLU / pool`:d.name==='fc1'?'float32 · ReLU':d.name==='fc2'?'float32 · raw scores':'';
+        c.font='13px "Segoe UI", Arial';
+        if(c.measureText(caption).width+12<=spacing)this._text(caption,p.x,labelBottom,9,palette.negative,'center');
       }
+      c.fillStyle = '#f4f3ed'; c.fillRect(0, h - 27, w, 27);
       this._text(this.snapshot ? `${this.snapshot.sample || 'Sampled image'} · ${this.snapshot.sample_id !== undefined ? 'sample ' + this.snapshot.sample_id : 'latest observed values'}` : 'Waiting for a sampled image — no synthetic values are shown.', 15, h - 15, 10, '#8eaaa9');
       if (this.selected) this._drawInspector();
       else if (this.hover) this._drawTooltip();
@@ -570,7 +611,7 @@
       if (this.component === 'backward') caption = 'Error signals move right to left · gradients guide the next adjustment.';
       if (this.component === 'update') caption = 'Small rings mark weight adjustments · the architecture stays the same.';
       if (this.component === 'evaluate') caption = 'Signals travel forward on held-out images · no weights are updated.';
-      this._text(caption, this.width / 2, 13, 10, this.palette.ink, 'center');
+      // The synchronized, readable explanation lives in the story panel.
       if (this.selected || this.construction === 0) return;
       let highlighted = building ? layerIndex : this.component === 'quantize' ? 1 + Math.floor(this.clock * .3) % 2 : this.component === 'evaluate' ? 4 : null;
       if (['forward', 'backward'].includes(this.component) && !building) {
@@ -585,7 +626,7 @@
     }
 
     _drawInput(p) {
-      const c = this.ctx, size = clamp(78 * this.baseScale * this.camera.zoom, 25, 150);
+      const c = this.ctx, size = clamp(78 * this.baseScale * this.camera.zoom, 58, 150);
       c.save(); this._roundRect(p.x - size / 2, p.y - size / 2, size, size, 10); c.clip();
       c.fillStyle = '#e0e9e3'; c.fillRect(p.x - size / 2, p.y - size / 2, size, size);
       if (this.imageCanvas) { c.imageSmoothingEnabled = false; c.drawImage(this.imageCanvas, p.x - size / 2, p.y - size / 2, size, size); }
@@ -599,15 +640,19 @@
       this._roundRect(p.x - size / 2, p.y - size / 2, size, size, 10); c.strokeStyle = this.palette.accent; c.lineWidth = 1; c.stroke();
       if (this.snapshot?.input) {
         const label = this.snapshot.input.label, pred = this.snapshot.input.prediction;
-        this._text(`Label: ${this.dataset === 'MNIST' ? label : CLASSES[label] || label}`, p.x, p.y + size / 2 + 22, 11, this.palette.ink, 'center');
-        this._text(`Guess: ${this.dataset === 'MNIST' ? pred : CLASSES[pred] || pred}`, p.x, p.y + size / 2 + 39, 10, '#8eaaa9', 'center');
+        const below = p.y + size / 2 + 22;
+        const textY = below + 25 < this.height - 32 ? below : p.y - size / 2 - 39;
+        if (textY >= 74 && textY + 25 < this.height - 32) {
+          this._text(`Label: ${this.dataset === 'MNIST' ? label : CLASSES[label] || label}`, p.x, textY, 11, this.palette.ink, 'center');
+          this._text(`Guess: ${this.dataset === 'MNIST' ? pred : CLASSES[pred] || pred}`, p.x, textY + 20, 10, '#8eaaa9', 'center');
+        }
       }
     }
 
     _drawTooltip() {
       const node = this.hover, value = this.layers.get(node.name)?.activations?.[node.index], p = this._project(node);
       const text = node.name === 'input' ? 'The first image in this sampled batch' : `${node.name} ${node.name.startsWith('conv') ? 'channel' : 'neuron'} ${node.index} · ${fmt(value)}`;
-      this.ctx.font = '11px "Segoe UI", Arial';
+      this.ctx.font = '15px "Segoe UI", Arial';
       const width = this.ctx.measureText(text).width + 22, x = clamp(p.x - width / 2, 8, this.width - width - 8), y = Math.max(5, p.y - 40);
       this._roundRect(x, y, width, 27, 6); this.ctx.fillStyle = '#111c24'; this.ctx.fill();
       this._text(text, x + 11, y + 14, 11, '#e6f6eb');
@@ -646,7 +691,7 @@
       const x = this.width - width - 14, top = 14, inner = width - 36;
       this.hitMap = this.hitWeights = null;
       c.save(); this._roundRect(x, top, width, this.height - 28, 16);
-      c.fillStyle = 'rgba(10,17,23,.97)'; c.fill(); c.strokeStyle = '#3c545b'; c.lineWidth = 1; c.stroke();
+      c.fillStyle = '#0a1117'; c.fill(); c.strokeStyle = '#3c545b'; c.lineWidth = 1; c.stroke();
       c.clip();
       this._text(node.name === 'input' ? 'THE INPUT IMAGE' : `${node.name.toUpperCase()} / ${layer?.kind === 'conv' ? 'CHANNEL' : 'NEURON'} ${node.index}`, x + 18, top + 25, 12, this.palette.accent, 'left', 700);
       this._text('×', x + width - 25, top + 25, 22, '#b8c3ce', 'center');
@@ -694,7 +739,7 @@
       c.fillStyle = '#0a1117'; c.fillRect(x + 1, footerY - 8, width - 2, 40);
       const detail = this.mapHover ? this.mapHover.kind === 'activation' ? `Neuron [${this.mapHover.row}, ${this.mapHover.col}] = ${fmt(this.mapHover.value)}` : `Weight ${this.mapHover.source} = ${fmt(this.mapHover.value)}` : 'Teal: positive · slate: negative';
       this._text(detail, x + 18, footerY + 4, 10, this.palette.ink);
-      this._text(this.inspectorMaxScroll > 0 ? 'Scroll this panel for more · brighter = larger magnitude' : 'Brighter = larger magnitude · sampled values', x + 18, footerY + 20, 9, '#8eaaa9');
+      this._text(this.inspectorMaxScroll > 0 ? 'Scroll for more · brightness = magnitude' : 'Brightness = magnitude · sampled values', x + 18, footerY + 20, 9, '#8eaaa9');
       c.restore();
       this.palette = scenePalette;
       this.inspectorDrawing = false;
